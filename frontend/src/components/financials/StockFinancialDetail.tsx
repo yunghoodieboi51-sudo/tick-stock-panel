@@ -238,6 +238,10 @@ export function StockFinancialDetail({ symbol, name }: Props) {
               </div>
             ))}
           </div>
+        ) : current.data?.supported === false ? (
+          <div className="py-10 text-center text-xs text-muted">
+            不支持 — 当前数据源不提供{TABS.find(t => t.key === tab)?.label}
+          </div>
         ) : rows.length === 0 ? (
           <div className="py-10 text-center text-xs text-muted">
             暂无{TABS.find(t => t.key === tab)?.label}数据 — 可点击顶部「全部同步」拉取

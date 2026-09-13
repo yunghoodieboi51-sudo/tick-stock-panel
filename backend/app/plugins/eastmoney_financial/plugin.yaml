@@ -1,0 +1,9 @@
+name: eastmoney_financial
+display_name: "东方财富财务(免费)"
+runtime: none
+entry: app.plugins.eastmoney_financial.provider:EastmoneyFinancialProvider
+check: app.plugins.eastmoney_financial.provider:availability
+datasets: [financial]
+description: "免费 A 股财务主要指标，仅提供 metrics；请求近 10 年但只保存可证明 PIT 安全的行，并统计覆盖率、丢弃原因和失败批次。利润表、资产负债表、现金流量表和股本暂不支持。"
+install_hint: "无需安装依赖或配置 Key"
+homepage: "https://emweb.securities.eastmoney.com/pc_hsf10/pages/index.html"

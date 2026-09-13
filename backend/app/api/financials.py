@@ -1,4 +1,5 @@
 """财务数据 API — 独立路由, Cap.FINANCIAL 门控。"""
+
 from __future__ import annotations
 
 import logging
@@ -8,9 +9,15 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.services.financial_sync import FINANCIAL_TABLES, get_financial_df
-from app.services.financial_analyzer import analyze_financials_stream
 from app.services import ai_reports
+from app.services.financial_analyzer import analyze_financials_stream
+from app.services.financial_sync import (
+    FINANCIAL_TABLES,
+    get_financial_df,
+    get_financial_provider_name,
+    get_supported_financial_tables,
+    is_financial_table_supported,
+)
 from app.tickflow.capabilities import Cap
 
 logger = logging.getLogger(__name__)
@@ -23,6 +30,7 @@ def _financial_allowed(capset) -> bool:
     if capset.has(Cap.FINANCIAL):
         return True
     from app.services.financial_sync import _financial_is_custom
+
     return _financial_is_custom()
 
 
@@ -30,43 +38,105 @@ def _require_financial(capset) -> None:
     """_require_financial(capset) 的 custom 感知版本。"""
     if not _financial_allowed(capset):
         from app.tickflow.capabilities import CapabilityDenied
+
         raise CapabilityDenied(Cap.FINANCIAL)
 
 
 @router.get("/status")
 def financial_status(request: Request):
-    """返回各财务表的同步状态。无需 FINANCIAL 权限（前端根据 available 决定是否展示）。"""
+    """返回各财务表的同步状态。无需 FINANCIAL 权限(前端根据 available 决定是否展示)。"""
     capset = request.app.state.capabilities
     if not _financial_allowed(capset):
         return {"available": False, "tables": {}}
 
     data_dir = request.app.state.repo.store.data_dir
+    provider = get_financial_provider_name()
+    supported_tables = set(get_supported_financial_tables())
     tables = {}
 
     for table in FINANCIAL_TABLES:
         path = data_dir / "financials" / table / "part.parquet"
+        if table not in supported_tables:
+            tables[table] = {
+                "rows": 0,
+                "symbols": 0,
+                "supported": False,
+                "available": False,
+                "provider": provider,
+                "reason": "unsupported_by_provider",
+                "retained_local_data": path.exists(),
+            }
+            continue
         if path.exists():
             try:
                 df = pl.read_parquet(path, columns=["symbol"])
                 tables[table] = {
                     "rows": len(df),
                     "symbols": df["symbol"].n_unique() if not df.is_empty() else 0,
+                    "supported": True,
+                    "available": not df.is_empty(),
+                    "provider": provider,
                 }
             except Exception:
-                tables[table] = {"rows": 0, "symbols": 0}
+                tables[table] = {
+                    "rows": 0,
+                    "symbols": 0,
+                    "supported": True,
+                    "available": False,
+                    "provider": provider,
+                }
         else:
-            tables[table] = {"rows": 0, "symbols": 0}
+            tables[table] = {
+                "rows": 0,
+                "symbols": 0,
+                "supported": True,
+                "available": False,
+                "provider": provider,
+            }
 
     fs = getattr(request.app.state, "financial_scheduler", None)
-    last_sync = fs.last_sync if fs else {}
+    last_sync = {
+        table: value
+        for table, value in (getattr(fs, "last_sync", {}) if fs else {}).items()
+        if table in supported_tables
+    }
+    sync_results = {
+        table: value
+        for table, value in (getattr(fs, "last_result", {}) if fs else {}).items()
+        if table in supported_tables and value.get("provider") == provider
+    }
 
     return {
         "available": True,
+        "provider": provider,
+        "supported_tables": [table for table in FINANCIAL_TABLES if table in supported_tables],
         "tables": tables,
         "last_sync": last_sync,
+        "sync_results": sync_results,
         # 服务端是否正在同步(手动触发)——前端据此显示"同步中"并防重复点击,
         # 且刷新页面后仍能正确反映服务端状态。
         "syncing": bool(fs and fs.is_syncing),
+    }
+
+
+def _table_payload(request: Request, table: str, symbol: str | None) -> dict:
+    provider = get_financial_provider_name()
+    if not is_financial_table_supported(table):
+        return {
+            "data": [],
+            "supported": False,
+            "available": False,
+            "provider": provider,
+            "reason": "unsupported_by_provider",
+        }
+    df = get_financial_df(request.app.state.repo.store.data_dir, table)
+    if symbol and not df.is_empty():
+        df = df.filter(pl.col("symbol") == symbol)
+    return {
+        "data": [] if df.is_empty() else df.to_dicts(),
+        "supported": True,
+        "available": not df.is_empty(),
+        "provider": provider,
     }
 
 
@@ -76,12 +146,7 @@ def get_metrics(request: Request, symbol: str | None = None):
     capset = request.app.state.capabilities
     _require_financial(capset)
 
-    df = get_financial_df(request.app.state.repo.store.data_dir, "metrics")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    return _table_payload(request, "metrics", symbol)
 
 
 @router.get("/income")
@@ -90,12 +155,7 @@ def get_income(request: Request, symbol: str | None = None):
     capset = request.app.state.capabilities
     _require_financial(capset)
 
-    df = get_financial_df(request.app.state.repo.store.data_dir, "income")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    return _table_payload(request, "income", symbol)
 
 
 @router.get("/balance-sheet")
@@ -104,12 +164,7 @@ def get_balance_sheet(request: Request, symbol: str | None = None):
     capset = request.app.state.capabilities
     _require_financial(capset)
 
-    df = get_financial_df(request.app.state.repo.store.data_dir, "balance_sheet")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    return _table_payload(request, "balance_sheet", symbol)
 
 
 @router.get("/cash-flow")
@@ -118,12 +173,7 @@ def get_cash_flow(request: Request, symbol: str | None = None):
     capset = request.app.state.capabilities
     _require_financial(capset)
 
-    df = get_financial_df(request.app.state.repo.store.data_dir, "cash_flow")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    return _table_payload(request, "cash_flow", symbol)
 
 
 @router.get("/shares")
@@ -132,12 +182,7 @@ def get_shares(request: Request, symbol: str | None = None):
     capset = request.app.state.capabilities
     _require_financial(capset)
 
-    df = get_financial_df(request.app.state.repo.store.data_dir, "shares")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    return _table_payload(request, "shares", symbol)
 
 
 @router.post("/sync/{table}")
@@ -167,6 +212,7 @@ def sync_table(request: Request, table: str):
 
 class AnalyzeRequest(BaseModel):
     """AI 财务分析请求。"""
+
     symbol: str
     focus: str = ""  # 可选:用户追加的分析关注点
 
@@ -202,8 +248,10 @@ async def analyze_financials(request: Request, req: AnalyzeRequest):
 # AI 报告 CRUD(历史报告持久化)
 # ================================================================
 
+
 class SaveReportRequest(BaseModel):
     """保存一条 AI 财务分析报告。"""
+
     symbol: str
     name: str = ""
     focus: str = ""
@@ -226,14 +274,16 @@ def save_report(request: Request, req: SaveReportRequest):
     """保存一条报告。"""
     capset = request.app.state.capabilities
     _require_financial(capset)
-    report = ai_reports.save_report({
-        "symbol": req.symbol,
-        "name": req.name,
-        "focus": req.focus,
-        "content": req.content,
-        "periods": req.periods,
-        "summary": req.summary,
-    })
+    report = ai_reports.save_report(
+        {
+            "symbol": req.symbol,
+            "name": req.name,
+            "focus": req.focus,
+            "content": req.content,
+            "periods": req.periods,
+            "summary": req.summary,
+        }
+    )
     return {"ok": True, "report": report}
 
 

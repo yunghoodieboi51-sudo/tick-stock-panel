@@ -1,0 +1,23 @@
+{
+  "success": true,
+  "message": "ok",
+  "result": {
+    "pages": 1,
+    "count": 1,
+    "data": [
+      {
+        "SECUCODE": "600519.SH",
+        "REPORT_DATE": "2026-06-30 00:00:00",
+        "NOTICE_DATE": "2026-08-15 00:00:00",
+        "UPDATE_DATE": "2026-08-15 00:00:00",
+        "BPS": 200.989754763617,
+        "ROEJQ": 16.75,
+        "XSMLL": 89.5552128279,
+        "XSJLL": 50.7515717487,
+        "TOTALOPERATEREVETZ": 1.300099475569,
+        "PARENTNETPROFITTZ": -1.951594855028,
+        "ZCFZL": 15.1931121807
+      }
+    ]
+  }
+}

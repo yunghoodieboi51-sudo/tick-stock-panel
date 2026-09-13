@@ -262,6 +262,7 @@ function CapabilityRoutingSection() {
     qc.invalidateQueries({ queryKey: QK.preferences })
     qc.invalidateQueries({ queryKey: QK.capabilities })
     qc.invalidateQueries({ queryKey: QK.quoteStatus })
+    qc.invalidateQueries({ queryKey: QK.financials })
   }
 
   /** 切换前先把变更写进矩阵/偏好缓存, 界面零延迟响应; 失败回滚 */
@@ -631,6 +632,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
     qc.invalidateQueries({ queryKey: QK.preferences })
     qc.invalidateQueries({ queryKey: QK.capabilities })
     qc.invalidateQueries({ queryKey: QK.quoteStatus })
+    qc.invalidateQueries({ queryKey: QK.financials })
   }
 
   const reload = useMutation({

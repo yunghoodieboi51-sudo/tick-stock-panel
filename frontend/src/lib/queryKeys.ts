@@ -21,6 +21,9 @@ export const QK = {
   overviewMarket: (asOf?: string) => ['overview-market', asOf ?? 'latest'] as const,
   indexQuotes:    ['index-quotes'] as const,
 
+  // Financials (status + all table/detail queries share this prefix)
+  financials:     ['financials'] as const,
+
   // Watchlist
   watchlist:            ['watchlist'] as const,
   watchlistGroups:      ['watchlist-groups'] as const,

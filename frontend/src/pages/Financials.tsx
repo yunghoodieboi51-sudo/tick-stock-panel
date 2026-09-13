@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { RefreshCw, Download, Lock, Loader2, X, Search, FileText, Database, Clock, CheckCircle2, Hourglass, Lightbulb, ExternalLink, ChartPie } from 'lucide-react'
+import { RefreshCw, Download, Lock, Loader2, X, Search, FileText, Database, Clock, CheckCircle2, Hourglass, Lightbulb, ExternalLink, ChartPie, AlertCircle, AlertTriangle } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
 import { useCapabilities, useCapabilityMatrix } from '@/lib/useSharedQueries'
@@ -143,29 +143,31 @@ export function Financials() {
   const tables = status?.tables ?? {}
   const available = status?.available ?? false
   const lastSync = status?.last_sync ?? {}
-  // 本次同步进度: 仅当 syncStartedAt 存在且 syncing 时, 按 last_sync 时间戳判断
+  const syncResults = status?.sync_results ?? {}
+  // 本次同步进度按最近一次尝试结果判断; last_sync 只表示最近一次有写入的时间。
   const isFullSync = syncing && syncStartedAt && !syncSingleTable  // 全量同步
   const isSingleSync = syncing && syncStartedAt && !!syncSingleTable  // 单表同步
   const TABLE_ORDER = ['metrics', 'income', 'balance_sheet', 'cash_flow', 'shares'] as const
-  const tableDoneThisRound = (key: string): boolean => {
+  const supportedTableOrder = TABLE_ORDER.filter(t => tables[t]?.supported !== false)
+  const tableSettledThisRound = (key: string): boolean => {
     if (!syncStartedAt || !syncing) return false
     // 单表同步: 只判断这一张表是否完成
     if (syncSingleTable && key !== syncSingleTable) return false
-    const ls = lastSync[key]
-    if (!ls) return false
-    return new Date(ls).getTime() >= syncStartedAt
+    const result = syncResults[key]
+    return !!result?.at && new Date(result.at).getTime() >= syncStartedAt
   }
   // 当前正在同步的表:
   // 全量同步 → 第一个未完成的; 单表同步 → 那张表(未完成时)
   const currentSyncingTable = syncing && syncStartedAt
     ? (syncSingleTable
-        ? (tableDoneThisRound(syncSingleTable) ? null : syncSingleTable)
-        : TABLE_ORDER.find(t => !tableDoneThisRound(t)) ?? null)
+        ? (tableSettledThisRound(syncSingleTable) ? null : syncSingleTable)
+        : supportedTableOrder.find(t => !tableSettledThisRound(t)) ?? null)
     : null
-  const syncedCount = TABLE_ORDER.filter(t => tableDoneThisRound(t)).length
+  const syncedCount = supportedTableOrder.filter(t => tableSettledThisRound(t)).length
   // 卡片三态: 仅全量同步时未轮到的表显示"等待"; 单表同步时其他表保持原样
   const isWaitingTable = (key: string): boolean =>
-    !!isFullSync && !tableDoneThisRound(key) && currentSyncingTable !== key
+    !!isFullSync && tables[key]?.supported !== false
+      && !tableSettledThisRound(key) && currentSyncingTable !== key
 
   return (
     <>
@@ -179,7 +181,7 @@ export function Financials() {
               <span className="text-xs text-accent/80 flex items-center gap-1.5">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 {isFullSync
-                  ? `已同步 ${syncedCount}/${TABLE_ORDER.length} 张表…`
+                  ? `已同步 ${syncedCount}/${supportedTableOrder.length} 张表…`
                   : isSingleSync
                     ? `同步${TABLE_LABELS[syncSingleTable!] ?? syncSingleTable}…`
                     : '同步中…'}
@@ -215,9 +217,18 @@ export function Financials() {
               {Object.entries(TABLE_LABELS).map(([key, label]) => {
                 const info = tables[key]
                 const TIcon = TABLE_ICON[key] ?? Database
-                const hasData = (info?.rows ?? 0) > 0
+                const supported = info?.supported !== false
+                const hasData = supported && (info?.rows ?? 0) > 0
+                const result = syncResults[key]
+                const resultStatus = supported ? result?.status : 'unsupported'
+                const providerStats = result?.provider_stats
+                const statParts = [
+                  providerStats?.failed_batches ? `失败 ${providerStats.failed_batches} 批` : null,
+                  providerStats?.failed_symbols ? `${providerStats.failed_symbols} 只标的失败` : null,
+                  providerStats?.accepted_rows != null ? `接收 ${providerStats.accepted_rows} 行` : null,
+                  providerStats?.dropped_rows ? `PIT 丢弃 ${providerStats.dropped_rows} 行` : null,
+                ].filter(Boolean).join(' · ')
                 // 本次同步三态: 完成 / 同步中 / 等待 (仅全量同步时未轮到的表才"等待")
-                const doneThisRound = tableDoneThisRound(key)
                 const isThisSyncing = currentSyncingTable === key
                 const isWaiting = isWaitingTable(key)
                 const lsTime = lastSync[key]
@@ -229,6 +240,8 @@ export function Financials() {
                         ? 'border-accent/40 bg-accent/[0.04]'
                         : isWaiting
                           ? 'border-border/50 bg-elevated/15'
+                        : !supported
+                          ? 'border-dashed border-border/50 bg-elevated/15 opacity-70'
                           : hasData
                             ? 'border-border bg-surface'
                             : 'border-dashed border-border/60 bg-elevated/20'
@@ -236,12 +249,16 @@ export function Financials() {
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
-                        {doneThisRound ? (
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                        ) : isThisSyncing ? (
+                        {isThisSyncing ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
                         ) : isWaiting ? (
                           <Hourglass className="h-3.5 w-3.5 text-muted/60" />
+                        ) : resultStatus === 'failed' ? (
+                          <AlertCircle className="h-3.5 w-3.5 text-danger" />
+                        ) : resultStatus === 'partial' ? (
+                          <AlertTriangle className="h-3.5 w-3.5 text-warning" />
+                        ) : resultStatus === 'success' ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
                         ) : (
                           <TIcon className={`h-3.5 w-3.5 ${hasData ? 'text-accent' : 'text-muted'}`} />
                         )}
@@ -250,8 +267,8 @@ export function Financials() {
                       <button
                         className="text-muted hover:text-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                         onClick={() => handleSync(key)}
-                        disabled={syncing}
-                        title={syncing ? '正在同步…' : `更新${label}`}
+                        disabled={syncing || !supported}
+                        title={!supported ? '当前财务数据源不支持此表' : syncing ? '正在同步…' : `更新${label}`}
                       >
                         {syncing
                           ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -259,16 +276,38 @@ export function Financials() {
                       </button>
                     </div>
                     <div className="mt-2 text-xl font-semibold tabular-nums text-foreground">
-                      {fmtBigNum(info?.rows ?? 0)}
-                      <span className="text-[10px] text-muted ml-1 font-normal">行</span>
+                      {supported ? fmtBigNum(info?.rows ?? 0) : '不支持'}
+                      {supported && <span className="text-[10px] text-muted ml-1 font-normal">行</span>}
                     </div>
                     <div className="text-[11px] text-muted mt-0.5">
-                      {fmtBigNum(info?.symbols ?? 0)} 只标的
+                      {supported
+                        ? `${fmtBigNum(info?.symbols ?? 0)} 只标的`
+                        : `${info?.provider ?? status?.provider ?? '当前数据源'} unavailable`}
                     </div>
+                    {supported && resultStatus && (
+                      <div
+                        className={`mt-2 text-[10px] leading-relaxed ${
+                          resultStatus === 'failed'
+                            ? 'text-danger'
+                            : resultStatus === 'partial'
+                              ? 'text-warning'
+                              : 'text-emerald-400'
+                        }`}
+                        title={result?.error}
+                      >
+                        {resultStatus === 'failed'
+                          ? `最近同步失败${result?.error ? `：${result.error}` : ''}`
+                          : resultStatus === 'partial'
+                            ? `最近同步部分成功${statParts ? ` · ${statParts}` : ''}`
+                            : `最近同步成功${statParts ? ` · ${statParts}` : ''}`}
+                      </div>
+                    )}
                     <div className="mt-auto pt-2 border-t border-border/40 text-[10px] text-muted flex items-center gap-1">
                       <Clock className="h-2.5 w-2.5 shrink-0" />
-                      {lsTime
-                        ? new Date(lsTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                      {!supported
+                        ? (info?.retained_local_data ? '旧数据已保留但隐藏' : '当前来源未提供')
+                        : lsTime
+                        ? `最近写入 ${new Date(lsTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
                         : '尚未同步'}
                     </div>
                   </div>

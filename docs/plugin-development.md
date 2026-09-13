@@ -311,6 +311,16 @@ uv run --extra dev python -m ruff check app/plugins/<your_plugin>/ tests/test_<y
 
 ## 现有插件参考
 
+- **`backend/app/plugins/eastmoney_financial/`** — 东方财富免费财务主要指标源
+  (`runtime: none`, 纯 HTTP 零依赖)
+  - 仅声明 `financial`, V4.2.1 首版只提供 `metrics`; 三大报表与股本明确不支持。
+  - 批量查询多个 `SECUCODE`, provider 内分页、限速并隔离单批失败；首次同步请求最近
+    10 年报告期，但只保存能够证明 PIT 安全的行；增量同步请求近 2 年后选择每股最新
+    安全报告期。结构化统计会记录安全行覆盖率、丢弃率、分类原因及失败批次/标的数。
+  - 使用上游真实 `NOTICE_DATE`。缺少公告日，或 `UPDATE_DATE` 晚于公告日且上游无法
+    提供修订版本历史时，整行 fail-closed 丢弃，禁止把当前修订值倒灌到历史公告日。
+    `UPDATE_DATE == NOTICE_DATE` 当前按同次披露接受；因上游缺乏更细粒度版本链，这只是
+    保守假设，不代表能够证明完整的历史修订过程。
 - **`backend/app/plugins/fuyao/`** — 同花顺官方 REST 数据源(runtime: none, 纯 HTTP 零依赖)
   - 提供 `realtime`(A 股全市场快照, 分页拉取)、`daily`(原始价日K三档: 近端窗口走 daily-k-10d dump, 深窗口走 daily-k 10 年全量 dump(172MB 一次下载、缓存复用、10d 补尾), 兜底单标的接口按 10 年自动分片)、`adj_factor`(事件 dump + 前收盘价从本地日K dump 一次取齐、缺价标的回退单标的接口, 按交易所公式推导单事件比值, 涨跌停自检; 全市场配价从逐标的 ~13 分钟降为秒级); Key 在设置页卡片直接配置(先探后存), 或 `.env` 配 `FUYAO_API_KEY`
   - `client.py` — httpx 客户端(X-api-key 认证 + 统一信封解包 + 分页 + 页间隔限频 + 单标的日K + dump 预签名下载, S3 下载不带 Key 头)

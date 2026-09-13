@@ -1,13 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
+import { QK } from '@/lib/queryKeys'
 
 export const FINANCIAL_QK = {
-  status: ['financials', 'status'],
-  metrics: (symbol?: string) => ['financials', 'metrics', symbol],
-  income: (symbol?: string) => ['financials', 'income', symbol],
-  balanceSheet: (symbol?: string) => ['financials', 'balance-sheet', symbol],
-  cashFlow: (symbol?: string) => ['financials', 'cash-flow', symbol],
-  shares: (symbol?: string) => ['financials', 'shares', symbol],
+  all: QK.financials,
+  status: [...QK.financials, 'status'] as const,
+  metrics: (symbol?: string) => [...QK.financials, 'metrics', symbol] as const,
+  income: (symbol?: string) => [...QK.financials, 'income', symbol] as const,
+  balanceSheet: (symbol?: string) => [...QK.financials, 'balance-sheet', symbol] as const,
+  cashFlow: (symbol?: string) => [...QK.financials, 'cash-flow', symbol] as const,
+  shares: (symbol?: string) => [...QK.financials, 'shares', symbol] as const,
 }
 
 export function useFinancialStatus() {
@@ -79,7 +81,7 @@ export function useFinancialSync() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: FINANCIAL_QK.status })
-      qc.invalidateQueries({ queryKey: ['financials'] })
+      qc.invalidateQueries({ queryKey: FINANCIAL_QK.all })
     },
   })
 }

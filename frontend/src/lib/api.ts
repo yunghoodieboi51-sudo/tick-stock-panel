@@ -93,10 +93,52 @@ export interface CapabilitiesResponse {
 }
 
 // ===== Financials =====
+export interface FinancialProviderStats {
+  requested_symbols?: number
+  successful_symbols?: number
+  failed_symbols?: number
+  total_batches?: number
+  failed_batches?: number
+  received_rows?: number
+  accepted_rows?: number
+  output_rows?: number
+  dropped_rows?: number
+  dropped_revision?: number
+  dropped_missing_or_invalid_date?: number
+  dropped_invalid_symbol?: number
+  dropped_unexpected_symbol?: number
+}
+
+export interface FinancialTableResponse<T> {
+  data: T[]
+  supported: boolean
+  available: boolean
+  provider: string
+  reason?: string
+}
+
 export interface FinancialStatus {
   available: boolean
-  tables: Record<string, { rows: number; symbols: number }>
+  provider?: string
+  supported_tables?: string[]
+  tables: Record<string, {
+    rows: number
+    symbols: number
+    supported?: boolean
+    available?: boolean
+    provider?: string
+    reason?: string
+    retained_local_data?: boolean
+  }>
   last_sync: Record<string, string>
+  sync_results?: Record<string, {
+    status: 'success' | 'partial' | 'failed'
+    provider: string
+    rows?: number
+    error?: string
+    at: string
+    provider_stats?: FinancialProviderStats
+  }>
   /** 服务端是否正在同步(手动触发)——驱动"同步中"UI 并防重复点击 */
   syncing?: boolean
 }
@@ -3044,27 +3086,27 @@ export const api = {
     request<FinancialStatus>('/api/financials/status'),
 
   financialMetrics: (symbol?: string) =>
-    request<{ data: FinancialMetricRecord[] }>(
+    request<FinancialTableResponse<FinancialMetricRecord>>(
       `/api/financials/metrics${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`,
     ),
 
   financialIncome: (symbol?: string) =>
-    request<{ data: FinancialIncomeRecord[] }>(
+    request<FinancialTableResponse<FinancialIncomeRecord>>(
       `/api/financials/income${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`,
     ),
 
   financialBalanceSheet: (symbol?: string) =>
-    request<{ data: FinancialBalanceSheetRecord[] }>(
+    request<FinancialTableResponse<FinancialBalanceSheetRecord>>(
       `/api/financials/balance-sheet${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`,
     ),
 
   financialCashFlow: (symbol?: string) =>
-    request<{ data: FinancialCashFlowRecord[] }>(
+    request<FinancialTableResponse<FinancialCashFlowRecord>>(
       `/api/financials/cash-flow${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`,
     ),
 
   financialShares: (symbol?: string) =>
-    request<{ data: FinancialSharesRecord[] }>(
+    request<FinancialTableResponse<FinancialSharesRecord>>(
       `/api/financials/shares${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`,
     ),
 

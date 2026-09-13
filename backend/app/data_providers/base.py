@@ -4,6 +4,7 @@ The first implementation wraps TickFlow. Other providers (Tushare/AkShare/etc.)
 should return the same normalized Polars schemas so storage, indicators and
 backtests stay data-source agnostic.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -14,6 +15,10 @@ from typing import Literal, Protocol
 import polars as pl
 
 AssetType = Literal["stock", "index", "etf"]
+
+
+class DataProviderRequestError(RuntimeError):
+    """Provider 已确认本次请求失败, 调用链不得把它降级为空数据成功。"""
 
 
 @dataclass(frozen=True)
