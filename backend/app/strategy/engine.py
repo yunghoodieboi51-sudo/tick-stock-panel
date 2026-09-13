@@ -222,6 +222,7 @@ class StrategyResult:
     scores: dict[str, float] = field(default_factory=dict)
     entry_signal_hits: list[dict] = field(default_factory=list)
     exit_signal_hits: list[dict] = field(default_factory=list)
+    fundamental_vetoes: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -1249,6 +1250,14 @@ class StrategyEngine:
         params: dict | None = None,
     ) -> set[str]:
         fields = set(strategy.matrix_strategy.required_fields())
+        from app.strategy.fundamental_veto import fundamental_veto_required_fields
+
+        fields.update(
+            fundamental_veto_required_fields(
+                str(strategy.meta.get("id", "")),
+                overrides,
+            )
+        )
         # 参数评分字段 (如挖掘策略的因子组合) 需展开为实际数据依赖,
         # 与 backtest._resolve_matrix_native 保持同一语义, 否则虚拟因子
         # (limit_up_count_* -> consecutive_limit_ups) 在矩阵里缺字段。
@@ -1350,6 +1359,18 @@ class StrategyEngine:
                 asset_mask=asset_mask,
             ),
         )
+        from app.strategy.fundamental_veto import (
+            apply_fundamental_veto,
+            evaluate_fundamental_veto,
+            resolve_fundamental_veto_config,
+        )
+
+        veto_config = resolve_fundamental_veto_config(strategy_id, overrides)
+        veto_result = None
+        technical_entry = signals.entry
+        if veto_config is not None and veto_config.enabled:
+            veto_result = evaluate_fundamental_veto(market, veto_config)
+            signals = apply_fundamental_veto(signals, veto_result)
         target_ids = [
             time_id
             for time_id, label in enumerate(market.timestamp_labels)
@@ -1360,6 +1381,22 @@ class StrategyEngine:
         target_time = target_ids[-1]
         entry_active = signals.entry[target_time]
         exit_active = signals.exit[target_time]
+        fundamental_vetoes: list[dict] = []
+        if veto_result is not None:
+            vetoed_assets = np.flatnonzero(
+                (technical_entry[target_time] != 0) & veto_result.veto[target_time]
+            )
+            fundamental_vetoes = [
+                {
+                    "symbol": market.symbols[int(asset_id)],
+                    "fundamental_veto": True,
+                    "fundamental_veto_reason_codes": veto_result.reason_codes_at(
+                        target_time,
+                        int(asset_id),
+                    ),
+                }
+                for asset_id in vetoed_assets
+            ]
         if asset_mask is not None:
             entry_active = entry_active & asset_mask
             exit_active = exit_active & asset_mask
@@ -1383,6 +1420,7 @@ class StrategyEngine:
                 elapsed_ms=(time.perf_counter() - started_at) * 1000,
                 entry_signal_hits=entry_signal_hits,
                 exit_signal_hits=exit_signal_hits,
+                fundamental_vetoes=fundamental_vetoes,
             )
 
         target_frame = self._matrix_target_frame(source_panel, as_of)
@@ -1397,7 +1435,13 @@ class StrategyEngine:
             if row is None:
                 continue
             score = float(signals.score[target_time, int(asset_id)])
-            ranked.append((score, {**row, "score": score}))
+            candidate = {**row, "score": score}
+            if veto_result is not None:
+                candidate.update({
+                    "fundamental_veto": False,
+                    "fundamental_veto_reason_codes": [],
+                })
+            ranked.append((score, candidate))
         ranked.sort(
             key=lambda item: item[0],
             reverse=bool(strategy.meta.get("descending", True)),
@@ -1415,6 +1459,7 @@ class StrategyEngine:
             scores=scores,
             entry_signal_hits=entry_signal_hits,
             exit_signal_hits=exit_signal_hits,
+            fundamental_vetoes=fundamental_vetoes,
         )
 
     def _run_composite_strategy(

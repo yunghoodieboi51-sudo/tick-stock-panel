@@ -166,6 +166,8 @@ def _strategy_detail(
     engine: StrategyEngine | None = None,
 ) -> dict:
     """策略详情（含用户覆盖）"""
+    from app.strategy.fundamental_veto import fundamental_veto_public_config
+
     bf = {**s.basic_filter}
     scoring = effective_scoring(s.meta.get("scoring"), overrides)
     scoring_directions = effective_scoring_directions(overrides)
@@ -215,6 +217,10 @@ def _strategy_detail(
         "descending": s.meta.get("descending", True),
         "limit": s.meta.get("limit", 30),
         "display_limit": overrides.get("display_limit") if overrides and "display_limit" in overrides else None,
+        "fundamental_veto": fundamental_veto_public_config(
+            str(s.meta.get("id", "")),
+            overrides,
+        ),
         # 叠加策略: 子策略列表与权重(供前端展示)。override.children 可覆盖 META 固化值。
         "composite_children": (
             [
@@ -446,6 +452,7 @@ def save_config(req: SaveConfigRequest, request: Request):
     _get_public_strategy(engine, req.strategy_id)
 
     _validate_scoring_config(req.overrides)
+    _validate_fundamental_veto_config(req.strategy_id, req.overrides)
     # 剥离与策略默认值相同的字段，只保存用户真正修改过的值
     overrides = _strip_defaults(req.strategy_id, req.overrides, engine)
 
@@ -461,6 +468,7 @@ def patch_config(req: SaveConfigRequest, request: Request):
     overrides = strategy_config.load_override(data_dir, req.strategy_id)
     overrides.update(req.overrides)
     _validate_scoring_config(overrides)
+    _validate_fundamental_veto_config(req.strategy_id, overrides)
     strategy_config.save_override(
         data_dir,
         req.strategy_id,
@@ -488,6 +496,19 @@ def _validate_scoring_config(overrides: dict) -> None:
             raise HTTPException(status_code=400, detail=f"评分因子 {invalid[0]} 的方向无效")
     if "scoring_replace" in overrides and not isinstance(overrides["scoring_replace"], bool):
         raise HTTPException(status_code=400, detail="scoring_replace 必须是布尔值")
+
+
+def _validate_fundamental_veto_config(strategy_id: str, overrides: dict) -> None:
+    if "fundamental_veto" not in overrides:
+        return
+    from app.strategy.fundamental_veto import resolve_fundamental_veto_config
+
+    try:
+        config = resolve_fundamental_veto_config(strategy_id, overrides)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if config is None:
+        raise HTTPException(status_code=400, detail="该策略未配置基本面否决策略")
 
 
 def _strip_defaults(strategy_id: str, overrides: dict, engine) -> dict:

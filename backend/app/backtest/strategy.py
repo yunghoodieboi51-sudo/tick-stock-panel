@@ -51,6 +51,13 @@ from app.indicators.pipeline import (
     get_signal_dependencies,
 )
 from app.strategy.engine import StrategyDataContext, StrategyDef, StrategyEngine
+from app.strategy.fundamental_veto import (
+    apply_fundamental_veto,
+    evaluate_fundamental_veto,
+    fundamental_veto_public_config,
+    fundamental_veto_required_fields,
+    resolve_fundamental_veto_config,
+)
 from app.strategy.scoring import (
     SCORING_DIRECTION_LOW,
     effective_scoring,
@@ -149,6 +156,12 @@ class StrategyDependencyResolver:
             )
 
         required_features = set(strategy.required_features)
+        required_features.update(
+            fundamental_veto_required_fields(
+                str(strategy.meta.get("id", "")),
+                overrides,
+            )
+        )
         required_signals = {
             _normalize_signal_name(signal)
             for signal in [*entry_signals, *exit_signals]
@@ -241,6 +254,12 @@ class StrategyDependencyResolver:
 
         required_features = set(strategy.required_features)
         required_features.update(strategy.matrix_strategy.required_fields())
+        required_features.update(
+            fundamental_veto_required_fields(
+                str(strategy.meta.get("id", "")),
+                overrides,
+            )
+        )
         parameter_fields = getattr(
             strategy.matrix_strategy,
             "required_fields_for_params",
@@ -1328,7 +1347,7 @@ class StrategyBacktestService:
             minute_fill=config.minute_fill,
         )
         t_signal = time.perf_counter()
-        selection_stats: dict[str, int | bool]
+        selection_stats: dict[str, object]
 
         if s.execution_backend == "composite":
             # composite 回测信号生成: 复用 matrix 数据加载, 逐子策略算信号后合并。
@@ -1508,6 +1527,19 @@ class StrategyBacktestService:
                             pipeline_config,
                             timing_ms,
                         )
+                veto_config = resolve_fundamental_veto_config(
+                    str(s.meta.get("id", config.strategy_id)),
+                    overrides,
+                )
+                fundamental_vetoed: int | None = None
+                fundamental_veto_reason_counts: dict[str, int] | None = None
+                technical_entry = signal_matrix.entry
+                if veto_config is not None and veto_config.enabled:
+                    veto_result = evaluate_fundamental_veto(market_data, veto_config)
+                    fundamental_veto_reason_counts = veto_result.reason_code_counts(
+                        technical_entry.astype(bool) & entry_time_mask[:, None]
+                    )
+                    signal_matrix = apply_fundamental_veto(signal_matrix, veto_result)
             except (TypeError, ValueError) as e:
                 return _err(f"矩阵策略信号计算失败: {e}")
 
@@ -1523,12 +1555,24 @@ class StrategyBacktestService:
                 return _err("在指定区间内未产生买入信号")
 
             raw_candidates = int(sim_signal_matrix.entry.sum())
+            if veto_config is not None and veto_config.enabled:
+                technical_candidates = int(np.count_nonzero(
+                    technical_entry[start_id:stop_id].astype(bool)
+                    & entry_time_mask[start_id:stop_id, None]
+                ))
+                fundamental_vetoed = technical_candidates - raw_candidates
             selection_stats = {
                 "strategy_matches": raw_candidates,
                 "entry_candidates": raw_candidates,
                 "entry_trigger_filtered": 0,
                 "entry_trigger_enabled": False,
             }
+            if fundamental_vetoed is not None:
+                selection_stats.update({
+                    "technical_candidates": technical_candidates,
+                    "fundamental_vetoed": fundamental_vetoed,
+                    "fundamental_veto_reason_counts": fundamental_veto_reason_counts,
+                })
             del market_data, signal_matrix
 
             t_matrix = time.perf_counter()
@@ -1698,6 +1742,10 @@ class StrategyBacktestService:
             "score_max": score_max,
             "source": s.source,
             "execution_backend": s.execution_backend,
+            "fundamental_veto": fundamental_veto_public_config(
+                str(s.meta.get("id", config.strategy_id)),
+                overrides,
+            ),
             **(
                 {
                     "composite_children": [

@@ -450,6 +450,47 @@ class ScreenerService:
         history = None
         if history_bars > 1:
             history = self._load_enriched_history(as_of, history_bars)
+
+        # Financial factors are not persisted in enriched data.  Attach only the
+        # fields required by an enabled shared veto policy, using the same PIT
+        # announcement-date gate as the backtest loader.
+        from app.strategy.fundamental_veto import fundamental_veto_required_fields
+
+        fundamental_fields: set[str] = set()
+        for strategy_id in strategy_ids:
+            fundamental_fields.update(
+                fundamental_veto_required_fields(
+                    strategy_id,
+                    (overrides_map or {}).get(strategy_id),
+                )
+            )
+        if fundamental_fields:
+            from app.backtest.fundamentals import (
+                attach_fundamental_factors,
+                attach_matrix_fundamental_fields,
+                load_fundamental_snapshot,
+            )
+
+            data_dir = getattr(getattr(self.repo, "store", None), "data_dir", None)
+            snapshot = load_fundamental_snapshot(data_dir)
+            if current is not None and not current.is_empty():
+                current = attach_fundamental_factors(
+                    current,
+                    snapshot,
+                    fundamental_fields,
+                )
+            if history is not None and not history.is_empty():
+                history = attach_fundamental_factors(
+                    history,
+                    snapshot,
+                    fundamental_fields,
+                )
+            if market is not None:
+                market = attach_matrix_fundamental_fields(
+                    market,
+                    data_dir,
+                    fundamental_fields,
+                )
         return StrategyDataContext(
             asset_type=self.asset_type,
             timeframe=timeframe,
