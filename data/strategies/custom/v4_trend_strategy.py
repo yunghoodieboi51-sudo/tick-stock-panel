@@ -100,6 +100,12 @@ ENTRY_PATTERN_IDS = (
     "PULLBACK_RESTART",
     "CONSOLIDATION_BREAKOUT",
 )
+# This is deliberately not a public META parameter.  It is a research-only
+# input used by the V4.4.2 experiment runner to isolate existing entry shapes;
+# normal screener/backtest calls never provide it and therefore retain V4.1.
+_EXPERIMENT_ENABLED_ENTRY_PATTERNS = "__experiment_enabled_entry_patterns"
+_EXPERIMENT_CONTEXT_PARAM = "__v4_4_2_experiment_context"
+_EXPERIMENT_CONTEXT_VALUE = 0x44
 EXIT_SIGNALS = [
     "signal_v4_ma20_breakdown",
     "signal_v4_ma20_weakening",
@@ -130,6 +136,29 @@ def _float_param(params: dict, name: str, default: float) -> float:
 
 def _int_param(params: dict, name: str, default: int) -> int:
     return max(1, int(params.get(name, default)))
+
+
+def _enabled_entry_patterns(params: dict) -> frozenset[str]:
+    """Return the research-only entry-pattern subset, or the V4.1 default."""
+    raw = params.get(_EXPERIMENT_ENABLED_ENTRY_PATTERNS)
+    context = params.get(_EXPERIMENT_CONTEXT_PARAM)
+    valid_context = (
+        isinstance(context, np.ndarray)
+        and context.shape == (1,)
+        and context.dtype == np.dtype(np.uint8)
+        and context[0] == _EXPERIMENT_CONTEXT_VALUE
+    )
+    if raw is None or not valid_context:
+        return frozenset(ENTRY_PATTERN_IDS)
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        raise ValueError("experimental entry patterns must be a sequence")
+    enabled = frozenset(str(value) for value in raw)
+    unknown = enabled.difference(ENTRY_PATTERN_IDS)
+    if unknown:
+        raise ValueError(f"unknown experimental entry patterns: {sorted(unknown)}")
+    if not enabled:
+        raise ValueError("experimental entry patterns must not be empty")
+    return enabled
 
 
 def _rising_score(values: np.ndarray, floor: float, target: float) -> np.ndarray:
@@ -179,6 +208,7 @@ class V4TrendMatrixStrategy:
         atr_pct = matrix_feature(market, "atr_pct")
         volume_ratio = matrix_feature(market, "vol_ratio_5d")
         daily_return = matrix_feature(market, "change_pct")
+        enabled_patterns = _enabled_entry_patterns(params)
 
         ma20_slope_min = _float_param(params, "ma20_slope_min", 0.0)
         ma20_slope_target = _float_param(params, "ma20_slope_target", 0.025)
@@ -275,7 +305,21 @@ class V4TrendMatrixStrategy:
             & (close > prior_range_high * (1.0 + breakout_buffer))
             & (volume_ratio >= _float_param(params, "breakout_volume_min", 1.20))
         )
-        launch_confirmed = price_breakout | pullback_restart | consolidation_breakout
+        # Keep the original raw conditions for score calculation.  The
+        # research-only selection below changes only entry eligibility and its
+        # frozen diagnostic metadata, never the V4.1 score formula.
+        enabled_price_breakout = price_breakout & ("BREAKOUT" in enabled_patterns)
+        enabled_pullback_restart = pullback_restart & (
+            "PULLBACK_RESTART" in enabled_patterns
+        )
+        enabled_consolidation_breakout = consolidation_breakout & (
+            "CONSOLIDATION_BREAKOUT" in enabled_patterns
+        )
+        launch_confirmed = (
+            enabled_price_breakout
+            | enabled_pullback_restart
+            | enabled_consolidation_breakout
+        )
 
         trend_score = 100.0 * (
             _TREND_SUBWEIGHTS[0]
@@ -417,15 +461,19 @@ class V4TrendMatrixStrategy:
         exit_ = ma20_breakdown | ma20_weakening | trend_structure_broken
 
         entry_code = np.where(
-            price_breakout,
+            enabled_price_breakout,
             0,
-            np.where(pullback_restart, 1, np.where(consolidation_breakout, 2, -1)),
+            np.where(
+                enabled_pullback_restart,
+                1,
+                np.where(enabled_consolidation_breakout, 2, -1),
+            ),
         ).astype(np.int16)
         entry_code[~entry] = -1
         entry_pattern_mask = (
-            price_breakout.astype(np.uint8)
-            | (pullback_restart.astype(np.uint8) << 1)
-            | (consolidation_breakout.astype(np.uint8) << 2)
+            enabled_price_breakout.astype(np.uint8)
+            | (enabled_pullback_restart.astype(np.uint8) << 1)
+            | (enabled_consolidation_breakout.astype(np.uint8) << 2)
         )
         entry_pattern_mask = np.where(entry, entry_pattern_mask, 0).astype(np.uint8)
         exit_code = np.where(

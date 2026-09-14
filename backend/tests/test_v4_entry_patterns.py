@@ -166,9 +166,46 @@ def test_v4_multi_pattern_mask_keeps_all_matches_and_primary_order():
             "basic_filter": {"enabled": False},
             "fundamental_veto": {"enabled": False},
         },
+        # A normal resolved-params path must not activate the offline-only
+        # pattern selector, even when an untrusted caller supplies its name.
+        params={"__experiment_enabled_entry_patterns": ["PULLBACK_RESTART"]},
     )
     assert result.rows[0]["primary_entry_pattern"] == "BREAKOUT"
     assert result.rows[0]["matched_entry_patterns"] == list(PATTERN_IDS)
+
+
+def test_v4_research_pattern_override_requires_runner_context_and_keeps_score_formula():
+    _, market = _market("MULTI")
+    strategy = _load_v4_strategy()
+    baseline = strategy.compute_signals(market, {})
+    explicit_default = strategy.compute_signals(
+        market,
+        {"__experiment_enabled_entry_patterns": list(PATTERN_IDS)},
+    )
+    untrusted_pullback_only = strategy.compute_signals(
+        market,
+        {"__experiment_enabled_entry_patterns": ["PULLBACK_RESTART"]},
+    )
+    pullback_only = strategy.compute_signals(
+        market,
+        {
+            "__experiment_enabled_entry_patterns": ["PULLBACK_RESTART"],
+            "__v4_4_2_experiment_context": np.array([0x44], dtype=np.uint8),
+        },
+    )
+
+    assert np.array_equal(baseline.entry, explicit_default.entry)
+    assert np.array_equal(baseline.entry_signal_code, explicit_default.entry_signal_code)
+    assert np.array_equal(baseline.entry_pattern_mask, explicit_default.entry_pattern_mask)
+    assert np.array_equal(baseline.score, explicit_default.score)
+    assert np.array_equal(baseline.entry, untrusted_pullback_only.entry)
+    assert np.array_equal(baseline.entry_signal_code, untrusted_pullback_only.entry_signal_code)
+    assert np.array_equal(baseline.entry_pattern_mask, untrusted_pullback_only.entry_pattern_mask)
+    assert np.array_equal(baseline.score, untrusted_pullback_only.score)
+    assert pullback_only.entry[-1, 0] == 1
+    assert pullback_only.entry_signal_code[-1, 0] == 1
+    assert pullback_only.entry_pattern_mask[-1, 0] == 0b010
+    assert pullback_only.score[-1, 0] == baseline.score[-1, 0]
 
 
 def test_v4_pattern_is_delayed_and_frozen_in_backtest_trade():
