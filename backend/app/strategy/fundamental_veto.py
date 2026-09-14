@@ -224,6 +224,12 @@ def apply_fundamental_veto(
         exit_signal_code=signals.exit_signal_code,
         entry_signal_ids=signals.entry_signal_ids,
         exit_signal_ids=signals.exit_signal_ids,
+        entry_pattern_mask=(
+            np.where(entry != 0, signals.entry_pattern_mask, 0).astype(np.uint8)
+            if signals.entry_pattern_mask is not None
+            else None
+        ),
+        entry_pattern_ids=signals.entry_pattern_ids,
     )
 
 

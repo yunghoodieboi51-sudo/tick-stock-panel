@@ -99,6 +99,12 @@ const quickRangeTitle = (range: QuickRangeConfig) => range.unit === 'all'
 const INPUT_CLS = `w-full px-2.5 py-1.5 rounded-input bg-surface border border-border text-xs
   focus:outline-none focus:border-accent transition-colors duration-150 ease-smooth`
 
+const ENTRY_PATTERN_LABELS: Record<string, string> = {
+  BREAKOUT: '突破启动',
+  PULLBACK_RESTART: '回踩重启',
+  CONSOLIDATION_BREAKOUT: '整理放量突破',
+}
+
 /** 成交时序说明 — 黄色问号图标, 点击弹出气泡。
  * 用 fixed 定位脱离父容器 overflow 裁剪(左侧表单是 overflow-y-auto, absolute 气泡会被裁)。 */
 function FillRuleHint() {
@@ -1271,6 +1277,7 @@ export function StrategyBacktest({ loadCandidate, onLoadConsumed }: {
   const excessReturn = strategyReturn != null && benchmarkReturn != null
     ? strategyReturn - benchmarkReturn
     : null
+  const entryPatternBreakdown = Object.entries(result?.entry_pattern_breakdown ?? {})
 
   /** 导出回测结果 CSV (带 BOM, Excel 可直接打开): 概要 + 净值曲线 + 交易明细 + 分标的统计 */
   const exportResultCsv = () => {
@@ -2367,6 +2374,38 @@ export function StrategyBacktest({ loadCandidate, onLoadConsumed }: {
                     {index > 0 ? '· ' : ''}{item.label} <span className="font-mono text-foreground">{item.value}</span> 次
                   </span>
                 ))}
+              </div>
+            )}
+
+            {entryPatternBreakdown.length > 0 && (
+              <div className="rounded-card border border-border overflow-x-auto">
+                <div className="border-b border-border px-3 py-2 text-xs font-medium text-secondary">入场形态表现</div>
+                <table className="w-full min-w-[680px] text-left text-[11px]">
+                  <thead className="bg-base/50 text-muted">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">形态</th>
+                      <th className="px-3 py-2 text-right font-medium">交易数</th>
+                      <th className="px-3 py-2 text-right font-medium">胜率</th>
+                      <th className="px-3 py-2 text-right font-medium">平均收益</th>
+                      <th className="px-3 py-2 text-right font-medium">Payoff Ratio</th>
+                      <th className="px-3 py-2 text-right font-medium">Standard Profit Factor</th>
+                      <th className="px-3 py-2 text-right font-medium">平均持有天数</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entryPatternBreakdown.map(([pattern, summary]) => (
+                      <tr key={pattern} className="border-t border-border/60">
+                        <td className="px-3 py-2 text-foreground">{ENTRY_PATTERN_LABELS[pattern] ?? pattern}</td>
+                        <td className="px-3 py-2 text-right font-mono">{summary.trade_count}</td>
+                        <td className="px-3 py-2 text-right font-mono">{fmtPct(summary.win_rate)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${priceColorClass(summary.average_return)}`}>{fmtPct(summary.average_return)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{summary.payoff_ratio != null ? summary.payoff_ratio.toFixed(2) : '—'}</td>
+                        <td className="px-3 py-2 text-right font-mono">{summary.standard_profit_factor != null ? summary.standard_profit_factor.toFixed(2) : '—'}</td>
+                        <td className="px-3 py-2 text-right font-mono">{summary.average_hold_days.toFixed(1)}天</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
 

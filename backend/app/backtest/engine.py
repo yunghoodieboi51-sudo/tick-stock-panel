@@ -28,6 +28,7 @@ from app.backtest.matrix import (
 from app.config import settings
 from app.enriched_generation import EnrichedGenerationUnavailableError
 from app.parquet import scan_enriched_parquet
+from app.strategy.entry_patterns import matched_entry_patterns, primary_entry_pattern
 from app.tickflow.repository import KlineRepository
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,19 @@ def _matrix_entry_score(matrix: MarketMatrix, time_id: int, asset_id: int) -> fl
     if source_time < 0:
         return 0.0
     return float(matrix.score[source_time, asset_id])
+
+
+def _matrix_entry_pattern_metadata(
+    matrix: MarketMatrix,
+    time_id: int,
+    asset_id: int,
+) -> tuple[str | None, tuple[str, ...]]:
+    """Read already-delayed pattern metadata; never infer it after entry."""
+    if matrix.entry_pattern_mask is None:
+        return None, ()
+    mask = int(matrix.entry_pattern_mask[time_id, asset_id])
+    matched = matched_entry_patterns(mask, matrix.entry_pattern_ids)
+    return primary_entry_pattern(mask, matrix.entry_pattern_ids), matched
 
 
 # ================================================================
@@ -120,6 +134,8 @@ class TradeRecord:
     # 仅当该腿由信号触发时填充, 止损/止盈/到期等非信号退出时 exit_signal_id 为 None。
     entry_signal_id: str | None = None
     exit_signal_id: str | None = None
+    primary_entry_pattern: str | None = None
+    matched_entry_patterns: tuple[str, ...] = ()
 
 
 @dataclass
@@ -1058,6 +1074,8 @@ class BacktestEngine:
                 blocked_exit_days=int(pos["blocked_exit_days"]),
                 entry_signal_id=pos["entry_signal_id"],
                 exit_signal_id=(pos.get("pending_exit_signal_id") or signal_id) if reason == "signal" else None,
+                primary_entry_pattern=pos["primary_entry_pattern"],
+                matched_entry_patterns=pos["matched_entry_patterns"],
             ))
             return True
 
@@ -1098,6 +1116,11 @@ class BacktestEngine:
                 continue
             entry_price = _refill(time_id, asset_id, "buy", float(entry_prices[time_id, asset_id]))
             entry_date = matrix.timestamp_labels[time_id][:10]
+            primary_pattern, matched_patterns = _matrix_entry_pattern_metadata(
+                matrix,
+                time_id,
+                asset_id,
+            )
             pos = {
                 "entry_time": time_id,
                 "entry_date": entry_date,
@@ -1107,6 +1130,8 @@ class BacktestEngine:
                 "entry_signal_id": _signal_id(
                     int(matrix.entry_signal_code[time_id, asset_id]), matrix.entry_signal_ids
                 ),
+                "primary_entry_pattern": primary_pattern,
+                "matched_entry_patterns": matched_patterns,
                 "entry_price": entry_price,
                 "entry_score": score,
                 "hold_days": 0,
@@ -1943,6 +1968,8 @@ class BacktestEngine:
                     pos.get("pending_exit_signal_id")
                     or _signal_id(int(matrix.exit_signal_code[time_id, asset_id]), matrix.exit_signal_ids)
                 ) if reason == "signal" else None,
+                primary_entry_pattern=pos["primary_entry_pattern"],
+                matched_entry_patterns=pos["matched_entry_patterns"],
             ))
 
         def _try_sell(
@@ -2127,6 +2154,11 @@ class BacktestEngine:
                                 _count("buy_exposure")
                                 continue
                             cash -= entry_value
+                            primary_pattern, matched_patterns = _matrix_entry_pattern_metadata(
+                                matrix,
+                                time_id,
+                                asset_id,
+                            )
                             positions[asset_id] = {
                                 "entry_date": date_text,
                                 "entry_signal_date": _signal_date(
@@ -2135,6 +2167,8 @@ class BacktestEngine:
                                 "entry_signal_id": _signal_id(
                                     int(matrix.entry_signal_code[time_id, asset_id]), matrix.entry_signal_ids
                                 ),
+                                "primary_entry_pattern": primary_pattern,
+                                "matched_entry_patterns": matched_patterns,
                                 "entry_price": entry_price,
                                 "entry_value": entry_value,
                                 "shares": shares,

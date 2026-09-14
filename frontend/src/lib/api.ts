@@ -1573,6 +1573,30 @@ export interface StrategyBacktestTrade {
   blocked_exit_days?: number
   entry_signal_id?: string | null
   exit_signal_id?: string | null
+  primary_entry_pattern?: string | null
+  matched_entry_patterns?: string[]
+}
+
+export interface EntryPatternBreakdown {
+  trade_count: number
+  win_count: number
+  loss_count: number
+  win_rate: number
+  average_return: number
+  median_return: number
+  cumulative_trade_return: number
+  average_win: number
+  average_loss: number
+  gross_profit: number
+  gross_loss: number
+  standard_profit_factor: number | null
+  /** Legacy BacktestEngine metric: average win / average loss. */
+  profit_factor: number | null
+  payoff_ratio: number | null
+  best_trade: number
+  worst_trade: number
+  average_hold_days: number
+  median_hold_days: number
 }
 
 export interface StrategyBacktestResult {
@@ -1589,6 +1613,9 @@ export interface StrategyBacktestResult {
     n_win: number
     n_lose: number
   } | null
+  entry_pattern_breakdown?: Record<string, EntryPatternBreakdown> | null
+  matched_pattern_counts?: Record<string, number> | null
+  matched_pattern_combinations?: Record<string, number> | null
   per_symbol_stats: {
     symbol: string
     n_trades: number

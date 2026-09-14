@@ -508,6 +508,9 @@ class SignalMatrix:
     exit_signal_code: np.ndarray
     entry_signal_ids: tuple[str, ...] = ()
     exit_signal_ids: tuple[str, ...] = ()
+    # Optional strategy diagnostics. Most matrix strategies leave these empty.
+    entry_pattern_mask: np.ndarray | None = None
+    entry_pattern_ids: tuple[str, ...] = ()
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -551,6 +554,8 @@ class MarketMatrix:
     exit_signal_code: np.ndarray
     entry_signal_ids: tuple[str, ...]
     exit_signal_ids: tuple[str, ...]
+    entry_pattern_mask: np.ndarray | None
+    entry_pattern_ids: tuple[str, ...]
     # 逐格入场价覆盖 (time x asset, NaN=回退 open/close 惯例)。分钟策略回测用:
     # 信号在盘中第 m 根触发, 入场价 = 触发分钟收盘价, 而非当日开盘/收盘。
     entry_price: np.ndarray | None = None
@@ -2241,6 +2246,8 @@ def make_signal_matrix(
     exit_signal_code: np.ndarray | None = None,
     entry_signal_ids: tuple[str, ...] = (),
     exit_signal_ids: tuple[str, ...] = (),
+    entry_pattern_mask: np.ndarray | None = None,
+    entry_pattern_ids: tuple[str, ...] = (),
 ) -> SignalMatrix:
     """Create a compact read-only signal matrix with canonical dtypes."""
     entry_array = _coerce_array(entry, shape, np.uint8, 0)
@@ -2248,6 +2255,11 @@ def make_signal_matrix(
     score_array = _coerce_array(score, shape, np.float32, 0.0)
     entry_codes = _coerce_array(entry_signal_code, shape, np.int16, -1)
     exit_codes = _coerce_array(exit_signal_code, shape, np.int16, -1)
+    pattern_mask = (
+        _coerce_array(entry_pattern_mask, shape, np.uint8, 0)
+        if entry_pattern_mask is not None
+        else None
+    )
     return _finalize_signal_matrix(
         entry_array,
         exit_array,
@@ -2256,6 +2268,8 @@ def make_signal_matrix(
         exit_codes,
         entry_signal_ids=entry_signal_ids,
         exit_signal_ids=exit_signal_ids,
+        entry_pattern_mask=pattern_mask,
+        entry_pattern_ids=entry_pattern_ids,
     )
 
 
@@ -2268,9 +2282,14 @@ def _finalize_signal_matrix(
     *,
     entry_signal_ids: tuple[str, ...] = (),
     exit_signal_ids: tuple[str, ...] = (),
+    entry_pattern_mask: np.ndarray | None = None,
+    entry_pattern_ids: tuple[str, ...] = (),
 ) -> SignalMatrix:
     shape = entry.shape
-    _make_read_only(entry, exit_, score, entry_signal_code, exit_signal_code)
+    arrays = [entry, exit_, score, entry_signal_code, exit_signal_code]
+    if entry_pattern_mask is not None:
+        arrays.append(entry_pattern_mask)
+    _make_read_only(*arrays)
     result = SignalMatrix(
         entry=entry,
         exit=exit_,
@@ -2279,6 +2298,8 @@ def _finalize_signal_matrix(
         exit_signal_code=exit_signal_code,
         entry_signal_ids=tuple(entry_signal_ids),
         exit_signal_ids=tuple(exit_signal_ids),
+        entry_pattern_mask=entry_pattern_mask,
+        entry_pattern_ids=tuple(entry_pattern_ids),
     )
     validate_signal_matrix(result, shape)
     return result
@@ -2306,6 +2327,16 @@ def validate_signal_matrix(signals: SignalMatrix, shape: tuple[int, int]) -> Non
             raise ValueError(f"SignalMatrix.{name} must be read-only")
     if not np.isfinite(signals.score).all():
         raise ValueError("SignalMatrix.score must contain only finite values")
+    if signals.entry_pattern_mask is not None:
+        pattern_mask = signals.entry_pattern_mask
+        if pattern_mask.shape != shape:
+            raise ValueError("SignalMatrix.entry_pattern_mask shape does not match market")
+        if pattern_mask.dtype != np.dtype(np.uint8):
+            raise TypeError("SignalMatrix.entry_pattern_mask must use uint8")
+        if pattern_mask.flags.writeable:
+            raise ValueError("SignalMatrix.entry_pattern_mask must be read-only")
+    elif signals.entry_pattern_ids:
+        raise ValueError("SignalMatrix.entry_pattern_ids require entry_pattern_mask")
 
 
 def build_market_matrix_from_signals(
@@ -2338,6 +2369,18 @@ def build_market_matrix_from_signals(
         present,
         exit_delay_bars,
     )
+    entry_pattern_mask = None
+    if signals.entry_pattern_mask is not None:
+        source_time = np.maximum(entry_signal_time, 0)
+        delayed_patterns = np.take_along_axis(
+            signals.entry_pattern_mask,
+            source_time,
+            axis=0,
+        )
+        entry_pattern_mask = np.where(entry != 0, delayed_patterns, 0).astype(
+            np.uint8,
+            copy=False,
+        )
 
     if reference_price is not None:
         if reference_price.shape != market.shape:
@@ -2362,7 +2405,7 @@ def build_market_matrix_from_signals(
         trigger_mask = signals.exit != 0
         resolved_reference_price[trigger_mask] = trigger_reference[trigger_mask]
 
-    _make_read_only(
+    arrays = [
         entry,
         exit_,
         resolved_reference_price,
@@ -2370,7 +2413,10 @@ def build_market_matrix_from_signals(
         exit_signal_time,
         entry_signal_code,
         exit_signal_code,
-    )
+    ]
+    if entry_pattern_mask is not None:
+        arrays.append(entry_pattern_mask)
+    _make_read_only(*arrays)
 
     return MarketMatrix(
         timestamps=market.timestamps,
@@ -2396,6 +2442,8 @@ def build_market_matrix_from_signals(
         exit_signal_code=exit_signal_code,
         entry_signal_ids=signals.entry_signal_ids,
         exit_signal_ids=signals.exit_signal_ids,
+        entry_pattern_mask=entry_pattern_mask,
+        entry_pattern_ids=signals.entry_pattern_ids,
         entry_price=(
             np.array(entry_price_override, dtype=np.float32, copy=True)
             if entry_price_override is not None
@@ -2510,6 +2558,12 @@ def slice_signal_matrix(signals: SignalMatrix, start: int, stop: int) -> SignalM
         signals.exit_signal_code[start:stop],
         entry_signal_ids=signals.entry_signal_ids,
         exit_signal_ids=signals.exit_signal_ids,
+        entry_pattern_mask=(
+            signals.entry_pattern_mask[start:stop]
+            if signals.entry_pattern_mask is not None
+            else None
+        ),
+        entry_pattern_ids=signals.entry_pattern_ids,
     )
 
 
@@ -3571,6 +3625,12 @@ class MatrixStrategyPipeline:
             exit_signal_code=exit_codes,
             entry_signal_ids=signals.entry_signal_ids,
             exit_signal_ids=signals.exit_signal_ids,
+            entry_pattern_mask=(
+                np.where(entry != 0, signals.entry_pattern_mask, 0).astype(np.uint8)
+                if signals.entry_pattern_mask is not None
+                else None
+            ),
+            entry_pattern_ids=signals.entry_pattern_ids,
         )
 
 
@@ -4187,6 +4247,10 @@ def apply_time_masks(
     exit_codes = np.array(signals.exit_signal_code, dtype=np.int16, copy=True)
     entry_codes[entry == 0] = -1
     exit_codes[exit_ == 0] = -1
+    entry_pattern_mask = None
+    if signals.entry_pattern_mask is not None:
+        entry_pattern_mask = np.array(signals.entry_pattern_mask, dtype=np.uint8, copy=True)
+        entry_pattern_mask[entry == 0] = 0
     return _finalize_signal_matrix(
         entry,
         exit_,
@@ -4195,6 +4259,8 @@ def apply_time_masks(
         exit_codes,
         entry_signal_ids=signals.entry_signal_ids,
         exit_signal_ids=signals.exit_signal_ids,
+        entry_pattern_mask=entry_pattern_mask,
+        entry_pattern_ids=signals.entry_pattern_ids,
     )
 
 

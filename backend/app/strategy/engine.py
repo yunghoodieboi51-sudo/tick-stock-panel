@@ -1429,6 +1429,11 @@ class StrategyEngine:
             for row in target_frame.iter_rows(named=True)
         }
         ranked: list[tuple[float, dict]] = []
+        from app.strategy.entry_patterns import (
+            matched_entry_patterns,
+            primary_entry_pattern,
+        )
+
         for asset_id in selected_assets:
             symbol = market.symbols[int(asset_id)]
             row = row_by_symbol.get(symbol)
@@ -1436,6 +1441,21 @@ class StrategyEngine:
                 continue
             score = float(signals.score[target_time, int(asset_id)])
             candidate = {**row, "score": score}
+            if signals.entry_pattern_mask is not None:
+                pattern_mask = int(signals.entry_pattern_mask[target_time, int(asset_id)])
+                matched_patterns = matched_entry_patterns(
+                    pattern_mask,
+                    signals.entry_pattern_ids,
+                )
+                primary_pattern = primary_entry_pattern(
+                    pattern_mask,
+                    signals.entry_pattern_ids,
+                )
+                if primary_pattern is not None:
+                    candidate.update({
+                        "primary_entry_pattern": primary_pattern,
+                        "matched_entry_patterns": list(matched_patterns),
+                    })
             if veto_result is not None:
                 candidate.update({
                     "fundamental_veto": False,

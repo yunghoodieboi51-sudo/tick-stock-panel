@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
+from itertools import combinations
 from pathlib import Path
 from typing import Literal
 
@@ -611,6 +612,9 @@ class StrategyBacktestResult:
     per_symbol_stats: list[dict] = field(default_factory=list)
     strategy_info: dict = field(default_factory=dict)
     factor_attribution: dict | None = None
+    entry_pattern_breakdown: dict[str, dict] | None = None
+    matched_pattern_counts: dict[str, int] | None = None
+    matched_pattern_combinations: dict[str, int] | None = None
     elapsed_ms: float = 0.0
     error: str | None = None
 
@@ -723,6 +727,124 @@ def _factor_attribution_summary(
     if not factors:
         return None
     return {"factors": factors, "n_win": win.height, "n_lose": lose.height}
+
+
+def trade_pnl_diagnostics(pnls: np.ndarray) -> dict[str, float | None]:
+    """Return JSON-safe trade-PnL diagnostics without changing legacy metrics."""
+    finite_pnls = np.asarray(pnls, dtype=float)
+    finite_pnls = finite_pnls[np.isfinite(finite_pnls)]
+    if not len(finite_pnls):
+        return {
+            "gross_profit": 0.0,
+            "gross_loss": 0.0,
+            "standard_profit_factor": None,
+            "payoff_ratio": None,
+        }
+
+    wins = finite_pnls[finite_pnls > 0]
+    losses = finite_pnls[finite_pnls <= 0]
+    gross_profit = float(wins.sum()) if len(wins) else 0.0
+    gross_loss = float(losses.sum()) if len(losses) else 0.0
+    average_win = float(np.mean(wins)) if len(wins) else 0.0
+    average_loss = abs(float(np.mean(losses))) if len(losses) else 0.0
+    standard_profit_factor = (
+        gross_profit / abs(gross_loss) if gross_loss < 0 else (None if gross_profit > 0 else 0.0)
+    )
+    return {
+        "gross_profit": round(gross_profit, 4),
+        "gross_loss": round(gross_loss, 4),
+        "standard_profit_factor": (
+            round(float(standard_profit_factor), 2) if standard_profit_factor is not None else None
+        ),
+        "payoff_ratio": (round(float(average_win / average_loss), 2) if average_loss > 0 else None),
+    }
+
+
+def _matched_pattern_combination_key(
+    matched: tuple[str, ...],
+    pattern_ids: tuple[str, ...],
+) -> str:
+    if len(matched) == 1:
+        return f"{matched[0]}_ONLY"
+    if len(matched) == len(pattern_ids) == 3:
+        return "ALL_THREE"
+    return "+".join(matched)
+
+
+def build_matched_pattern_diagnostics(
+    trades: list,
+    pattern_ids: tuple[str, ...],
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Count all frozen matched patterns without double-counting primary PnL."""
+    counts = {pattern_id: 0 for pattern_id in pattern_ids}
+    combination_counts = {
+        _matched_pattern_combination_key(tuple(group), pattern_ids): 0
+        for size in range(1, len(pattern_ids) + 1)
+        for group in combinations(pattern_ids, size)
+    }
+    for trade in trades:
+        raw_matched = set(getattr(trade, "matched_entry_patterns", ()))
+        matched = tuple(pattern_id for pattern_id in pattern_ids if pattern_id in raw_matched)
+        if not matched:
+            continue
+        for pattern_id in matched:
+            counts[pattern_id] += 1
+        combination_counts[_matched_pattern_combination_key(matched, pattern_ids)] += 1
+    return counts, combination_counts
+
+
+def build_entry_pattern_breakdown(
+    trades: list,
+    pattern_ids: tuple[str, ...],
+) -> dict[str, dict]:
+    """Summarize completed trades once by their frozen primary entry pattern."""
+    grouped: dict[str, list] = {pattern_id: [] for pattern_id in pattern_ids}
+    for trade in trades:
+        pattern = getattr(trade, "primary_entry_pattern", None)
+        if pattern in grouped:
+            grouped[pattern].append(trade)
+
+    breakdown: dict[str, dict] = {}
+    for pattern_id in pattern_ids:
+        group = grouped[pattern_id]
+        pnls = np.asarray([float(trade.pnl_pct) for trade in group], dtype=float)
+        durations = np.asarray([float(trade.duration) for trade in group], dtype=float)
+        pnls = pnls[np.isfinite(pnls)]
+        durations = durations[np.isfinite(durations)]
+        wins = pnls[pnls > 0]
+        losses = pnls[pnls <= 0]
+        average_win = float(np.mean(wins)) if len(wins) else 0.0
+        average_loss = abs(float(np.mean(losses))) if len(losses) else 0.0
+        pnl_diagnostics = trade_pnl_diagnostics(pnls)
+        breakdown[pattern_id] = {
+            "trade_count": len(pnls),
+            "win_count": len(wins),
+            "loss_count": len(losses),
+            "win_rate": round(float(len(wins) / len(pnls)), 4) if len(pnls) else 0.0,
+            "average_return": round(float(np.mean(pnls)), 4) if len(pnls) else 0.0,
+            "median_return": round(float(np.median(pnls)), 4) if len(pnls) else 0.0,
+            # This is a compounded sequence of independent trades, not portfolio return.
+            "cumulative_trade_return": round(
+                float(np.prod(1.0 + pnls) - 1.0),
+                4,
+            )
+            if len(pnls)
+            else 0.0,
+            "average_win": round(average_win, 4),
+            "average_loss": round(average_loss, 4),
+            **pnl_diagnostics,
+            # Existing BacktestEngine public field is average win / average loss;
+            # keep it unchanged for compatibility and expose the standard metric
+            # separately as standard_profit_factor.
+            "profit_factor": round(float(average_win / average_loss), 2)
+            if average_loss > 0
+            else None,
+            "best_trade": round(float(np.max(pnls)), 4) if len(pnls) else 0.0,
+            "worst_trade": round(float(np.min(pnls)), 4) if len(pnls) else 0.0,
+            "average_hold_days": round(float(np.mean(durations)), 1) if len(durations) else 0.0,
+            "median_hold_days": round(float(np.median(durations)), 1) if len(durations) else 0.0,
+        }
+    return breakdown
 
 
 @dataclass(frozen=True)
@@ -1713,6 +1835,12 @@ class StrategyBacktestService:
         result.stats["matrix_data_cache_hit"] = matrix_data_cache_hit
         result.stats["matrix_data_cache_status"] = matrix_data_cache_status
         result.stats["matrix_data_cache_timing_ms"] = dict(matrix_data_cache_timing_ms)
+        if result_policy.include_trades:
+            result.stats.update(
+                trade_pnl_diagnostics(
+                    np.asarray([trade.pnl_pct for trade in result.trades], dtype=float)
+                )
+            )
         if prepared is not None:
             result.stats["shared_market_data_bytes"] = prepared.market_data.nbytes
             result.stats["shared_prepare_timing_ms"] = prepared.prepare_timing_ms
@@ -1773,6 +1901,20 @@ class StrategyBacktestService:
             except Exception as exc:
                 logger.warning("factor attribution failed: %s", exc)
 
+        entry_pattern_breakdown = None
+        matched_pattern_counts = None
+        matched_pattern_combinations = None
+        entry_pattern_ids = tuple(getattr(s.matrix_strategy, "entry_pattern_ids", ()))
+        if entry_pattern_ids and result_policy.include_trades:
+            entry_pattern_breakdown = build_entry_pattern_breakdown(
+                result.trades,
+                entry_pattern_ids,
+            )
+            (
+                matched_pattern_counts,
+                matched_pattern_combinations,
+            ) = build_matched_pattern_diagnostics(result.trades, entry_pattern_ids)
+
         elapsed = (time.perf_counter() - t0) * 1000
 
         return StrategyBacktestResult(
@@ -1794,6 +1936,9 @@ class StrategyBacktestService:
             ),
             strategy_info=strategy_info,
             factor_attribution=factor_attribution,
+            entry_pattern_breakdown=entry_pattern_breakdown,
+            matched_pattern_counts=matched_pattern_counts,
+            matched_pattern_combinations=matched_pattern_combinations,
             elapsed_ms=round(elapsed, 1),
         )
 
@@ -2510,7 +2655,7 @@ class StrategyBacktestService:
 
     @staticmethod
     def _trade_to_dict(t) -> dict:
-        return {
+        trade = {
             "symbol": t.symbol,
             "name": t.name,
             "entry_date": str(t.entry_date) if isinstance(t.entry_date, date) else str(t.entry_date),
@@ -2533,6 +2678,12 @@ class StrategyBacktestService:
             "entry_signal_id": getattr(t, "entry_signal_id", None),
             "exit_signal_id": getattr(t, "exit_signal_id", None),
         }
+        matched_patterns = tuple(getattr(t, "matched_entry_patterns", ()))
+        primary_pattern = getattr(t, "primary_entry_pattern", None)
+        if primary_pattern is not None or matched_patterns:
+            trade["primary_entry_pattern"] = primary_pattern
+            trade["matched_entry_patterns"] = list(matched_patterns)
+        return trade
 
     @staticmethod
     def _config_to_dict(c: StrategyBacktestConfig) -> dict:

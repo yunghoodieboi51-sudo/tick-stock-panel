@@ -95,6 +95,11 @@ ENTRY_SIGNALS = [
     "signal_v4_pullback_restart",
     "signal_v4_consolidation_breakout",
 ]
+ENTRY_PATTERN_IDS = (
+    "BREAKOUT",
+    "PULLBACK_RESTART",
+    "CONSOLIDATION_BREAKOUT",
+)
 EXIT_SIGNALS = [
     "signal_v4_ma20_breakdown",
     "signal_v4_ma20_weakening",
@@ -138,6 +143,8 @@ def _falling_score(values: np.ndarray, full_score_at: float, zero_score_at: floa
 
 
 class V4TrendMatrixStrategy:
+    entry_pattern_ids = ENTRY_PATTERN_IDS
+
     def required_fields(self) -> frozenset[str]:
         return frozenset({"open", "high", "low", "close", "volume"})
 
@@ -415,6 +422,12 @@ class V4TrendMatrixStrategy:
             np.where(pullback_restart, 1, np.where(consolidation_breakout, 2, -1)),
         ).astype(np.int16)
         entry_code[~entry] = -1
+        entry_pattern_mask = (
+            price_breakout.astype(np.uint8)
+            | (pullback_restart.astype(np.uint8) << 1)
+            | (consolidation_breakout.astype(np.uint8) << 2)
+        )
+        entry_pattern_mask = np.where(entry, entry_pattern_mask, 0).astype(np.uint8)
         exit_code = np.where(
             ma20_breakdown,
             0,
@@ -431,6 +444,8 @@ class V4TrendMatrixStrategy:
             exit_signal_code=exit_code,
             entry_signal_ids=tuple(ENTRY_SIGNALS),
             exit_signal_ids=tuple(EXIT_SIGNALS),
+            entry_pattern_mask=entry_pattern_mask,
+            entry_pattern_ids=ENTRY_PATTERN_IDS,
         )
 
 
