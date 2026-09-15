@@ -16,6 +16,7 @@ import numpy as np
 from app.backtest.matrix import MarketDataMatrix, SignalMatrix, make_signal_matrix
 
 V4_TREND_STRATEGY_ID = "v4_trend_strategy"
+V4_5_BREAKOUT_STRATEGY_ID = "v4_5_breakout_strategy"
 
 CORE_FUNDAMENTAL_FIELDS = (
     "roe_latest",
@@ -90,6 +91,11 @@ class FundamentalVetoResult:
 _DEFAULT_POLICIES = MappingProxyType(
     {
         V4_TREND_STRATEGY_ID: FundamentalVetoConfig(),
+        # V4.5c is a separate research strategy, but it is loaded through the
+        # normal custom-strategy path.  Give it the same PIT fail-closed policy
+        # so an accidental normal Screener/backtest invocation cannot bypass
+        # the shared V4.2 financial safety layer.
+        V4_5_BREAKOUT_STRATEGY_ID: FundamentalVetoConfig(),
     }
 )
 
