@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 import numpy as np
@@ -121,10 +121,28 @@ def test_runner_marks_pattern_research_only_in_its_own_config():
     pattern = runner._config(_base_request().with_enabled_patterns(["BREAKOUT"]))
 
     assert "__v4_4_2_experiment_context" not in ordinary.params
+    assert ordinary.regime_filter is None
     context = pattern.params["__v4_4_2_experiment_context"]
     assert isinstance(context, np.ndarray)
     assert context.tolist() == [0x44]
     assert pattern.params["__experiment_enabled_entry_patterns"] == ["BREAKOUT"]
+
+
+def test_runner_passes_regime_filter_only_to_backtest_config():
+    runner = StrategyExperimentRunner(_Service(), _StrategyEngine())
+    request = replace(
+        _base_request(), regime_filter={"states": ["strong", "lean_strong"]}
+    )
+
+    config = runner._config(request)
+
+    assert config.regime_filter == {"states": ["strong", "lean_strong"]}
+    assert config.regime_filter is not request.regime_filter
+    assert config.regime_filter["states"] is not request.regime_filter["states"]
+
+    config.regime_filter["states"].append("range")
+
+    assert request.regime_filter == {"states": ["strong", "lean_strong"]}
 
 
 def test_trading_day_split_uses_indexed_observed_days():

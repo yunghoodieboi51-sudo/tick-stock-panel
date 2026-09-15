@@ -12,6 +12,7 @@ import csv
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -59,6 +60,9 @@ class ExperimentRequest:
     mode: str = "position"
     max_positions: int = 10
     position_sizing: str = "equal"
+    # Offline-only pass-through to the existing backtest T-1 regime gate.
+    # It deliberately has no connection to persisted strategy overrides or APIs.
+    regime_filter: dict[str, Any] | None = None
 
     def with_params(self, **params: Any) -> ExperimentRequest:
         return replace(self, params={**self.params, **params})
@@ -336,6 +340,11 @@ class StrategyExperimentRunner:
             mode=request.mode,  # type: ignore[arg-type]
             max_positions=request.max_positions,
             position_sizing=request.position_sizing,  # type: ignore[arg-type]
+            regime_filter=(
+                deepcopy(request.regime_filter)
+                if request.regime_filter is not None
+                else None
+            ),
         )
 
     def _effective_params(self, request: ExperimentRequest) -> dict[str, Any]:
