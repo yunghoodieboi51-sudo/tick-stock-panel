@@ -36,6 +36,7 @@ const Branding = lazy(() => import('./pages/Branding').then(m => ({ default: m.B
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })))
 const Regime = lazy(() => import('./pages/Regime').then(m => ({ default: m.Regime })))
 const AbnormalMoves = lazy(() => import('./pages/AbnormalMoves').then(m => ({ default: m.AbnormalMoves })))
+const TradingPlan = lazy(() => import('./pages/TradingPlan').then(m => ({ default: m.TradingPlan })))
 const Dev = lazy(() => import('./pages/Dev').then(m => ({ default: m.Dev })))
 
 const CORE_ROUTE_PATHS = new Set([
@@ -67,6 +68,7 @@ const CORE_ROUTE_PATHS = new Set([
   '/settings/keys',
   '/settings/ai',
   '/settings/queries',
+  '/trading-plan',
 ])
 
 finalizeFrontendExtensions(CORE_ROUTE_PATHS)
@@ -139,6 +141,7 @@ export const router = createBrowserRouter([
       { path: 'data', element: <Data /> },
       { path: 'monitor', element: <Monitor /> },
       { path: 'lots', element: <Lots /> },
+      { path: 'trading-plan', element: <TradingPlan /> },
       { path: 'signals', element: <Signals /> },
       { path: 'limit-ladder', element: <LimitUpLadder /> },
       { path: 'indices', element: <Indices /> },

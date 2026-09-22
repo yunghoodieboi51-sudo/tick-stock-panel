@@ -135,6 +135,8 @@ def test_v4_each_entry_pattern_has_stable_primary_attribution(
     assert signals.entry_pattern_mask[-1, 0] == expected_mask
     # Fixed baseline protects V4.1's existing score as diagnostic metadata is added.
     assert signals.score[-1, 0] == pytest.approx(expected_score, abs=0.001)
+    assert set(signals.diagnostics) == {"trend", "momentum", "breakout", "volume", "volatility"}
+    assert all(values.shape == signals.shape and not values.flags.writeable for values in signals.diagnostics.values())
 
 
 def test_v4_multi_pattern_mask_keeps_all_matches_and_primary_order():

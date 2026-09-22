@@ -18,6 +18,7 @@ from app.api import (
     analysis,
     backtest,
     data,
+    daily_scan,
     ext_data,
     factors,
     financials,
@@ -482,6 +483,7 @@ app.include_router(regime.router)
 app.include_router(analysis.router)
 app.include_router(pipeline.router)
 app.include_router(data.router)
+app.include_router(daily_scan.router)
 app.include_router(ext_data.router)
 app.include_router(financials.router)
 app.include_router(stock_analysis.router)

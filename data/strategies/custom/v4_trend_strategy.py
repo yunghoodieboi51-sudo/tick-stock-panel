@@ -494,6 +494,16 @@ class V4TrendMatrixStrategy:
             exit_signal_ids=tuple(EXIT_SIGNALS),
             entry_pattern_mask=entry_pattern_mask,
             entry_pattern_ids=ENTRY_PATTERN_IDS,
+            diagnostics={
+                # Warmup rows can be NaN before an indicator becomes defined.
+                # Diagnostics are presentation-only and must satisfy the shared
+                # finite SignalMatrix contract without changing V4's score.
+                "trend": np.nan_to_num(trend_score, nan=0.0).astype(np.float32),
+                "momentum": np.nan_to_num(momentum_score, nan=0.0).astype(np.float32),
+                "breakout": np.nan_to_num(breakout_score, nan=0.0).astype(np.float32),
+                "volume": np.nan_to_num(volume_score, nan=0.0).astype(np.float32),
+                "volatility": np.nan_to_num(volatility_score, nan=0.0).astype(np.float32),
+            },
         )
 
 

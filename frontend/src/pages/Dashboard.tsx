@@ -601,6 +601,20 @@ export function Dashboard() {
   // 首次使用(无数据 + 未完成引导)自动弹窗: 同一会话只弹一次
   const [showWelcomeModal, setShowWelcomeModal] = useState(false)
   const dataStatus = useDataStatus({ staleTime: 60_000 })
+  const dailyScanStatus = useQuery({
+    queryKey: QK.dailyScanStatus,
+    queryFn: api.dailyScanStatus,
+    refetchInterval: query => query.state.data?.state === 'RUNNING' ? 1500 : false,
+  })
+  const dailyScanRuns = useQuery({
+    queryKey: QK.dailyScanRuns(),
+    queryFn: () => api.dailyScanRuns(),
+    refetchInterval: dailyScanStatus.data?.state === 'RUNNING' ? 1500 : false,
+  })
+  const startDailyScan = useMutation({
+    mutationFn: () => api.dailyScanStart(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK.dailyScan }),
+  })
   const overview = useQuery({
     queryKey: QK.overviewMarket(selectedDate),
     queryFn: () => api.overviewMarket(selectedDate),
@@ -816,6 +830,13 @@ export function Dashboard() {
         </div>
       )}
 
+      <section className="mb-1.5 rounded-card border border-border bg-surface px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><div className="text-xs font-semibold">V4 Trend Strategy <span className="ml-1 text-warning">Research / Unvalidated</span></div><div className="mt-1 text-[11px] text-muted">Data as of {latestDate ?? '—'} · Latest scan {dailyScanStatus.data?.latest?.completed_at ?? '—'} · {dailyScanStatus.data?.latest?.candidate_count ?? 0} candidates</div></div>
+          <div className="flex items-center gap-2"><button type="button" disabled={dailyScanStatus.data?.state === 'RUNNING' || startDailyScan.isPending} onClick={() => startDailyScan.mutate()} className="rounded-btn bg-accent px-2.5 py-1.5 text-xs text-white disabled:opacity-50">{dailyScanStatus.data?.state === 'RUNNING' ? (dailyScanStatus.data.latest?.stage ?? 'Running') : 'Run V4 Scan'}</button><Link to="/trading-plan" className="rounded-btn border border-border px-2.5 py-1.5 text-xs text-secondary hover:text-foreground">Trading Plan</Link></div>
+        </div>
+        {dailyScanRuns.data?.items[0]?.state === 'FAILED' && <p className="mt-1 text-[11px] text-danger">Latest scan failed: {dailyScanRuns.data.items[0].error ?? 'unknown error'}</p>}
+      </section>
       <div className="mb-1.5 grid grid-cols-4 gap-1">
         {data.indices.map(item => <IndexTicker key={item.symbol} item={item} />)}
       </div>

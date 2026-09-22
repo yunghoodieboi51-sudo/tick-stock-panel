@@ -24,6 +24,7 @@ function kv<T>(key: string) {
 }
 
 export const storage = {
+  dailyScanSizing: kv<{ account_size: number; max_position_pct: number; max_candidates: number; risk_per_trade_pct: number }>('daily_scan_sizing'),
   /** 查询轮询 / SSE 配置 */
   queryConfig:          kv<unknown>('tf-stocks-query-config'),
 

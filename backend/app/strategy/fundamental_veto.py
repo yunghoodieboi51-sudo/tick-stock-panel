@@ -236,6 +236,7 @@ def apply_fundamental_veto(
             else None
         ),
         entry_pattern_ids=signals.entry_pattern_ids,
+        diagnostics=signals.diagnostics,
     )
 
 

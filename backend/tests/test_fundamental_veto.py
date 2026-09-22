@@ -386,6 +386,8 @@ def test_realtime_and_backtest_apply_identical_veto_mask():
             "fundamental_veto_reason_codes": [NEGATIVE_ROE],
         }
     ]
+    assert realtime.vetoed_rows[0]["symbol"] == "000002.SZ"
+    assert realtime.vetoed_rows[0]["fundamental_veto_reason_codes"] == [NEGATIVE_ROE]
     assert backtest_engine.sim_matrix.entry[-1].tolist() == [1, 0]
     assert backtest.stats["selection"]["technical_candidates"] == 4
     assert backtest.stats["selection"]["fundamental_vetoed"] == 2

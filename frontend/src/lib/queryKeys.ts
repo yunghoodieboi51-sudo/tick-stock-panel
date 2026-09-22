@@ -50,6 +50,10 @@ export const QK = {
   screenerCachedResult: (strategyId: string, asOf?: string, ext?: string) => ['screener-cached', 'strategy', strategyId, asOf ?? '', ext ?? ''] as const,
   screenerCached:       (asOf?: string, ext?: string) => ['screener-cached', 'all', asOf ?? '', ext ?? ''] as const,
   screenerKlineBatch:   (symbols: string) => ['screener-kline-batch', symbols] as const,
+  dailyScan:            ['daily-scan'] as const,
+  dailyScanStatus:      ['daily-scan', 'status'] as const,
+  dailyScanRuns:        (limit = 30) => ['daily-scan', 'runs', limit] as const,
+  dailyScanRun:         (id: string) => ['daily-scan', 'run', id] as const,
   marketSnapshot:       ['market-snapshot'] as const,
   limitLadder:          (asOf?: string) => ['limit-ladder', asOf] as const,
 

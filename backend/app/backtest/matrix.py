@@ -511,6 +511,7 @@ class SignalMatrix:
     # Optional strategy diagnostics. Most matrix strategies leave these empty.
     entry_pattern_mask: np.ndarray | None = None
     entry_pattern_ids: tuple[str, ...] = ()
+    diagnostics: Mapping[str, np.ndarray] = field(default_factory=dict)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -518,11 +519,12 @@ class SignalMatrix:
 
     @property
     def nbytes(self) -> int:
-        return int(sum(
+        direct_arrays = sum(
             value.nbytes
             for value in self.__dict__.values()
             if isinstance(value, np.ndarray)
-        ))
+        )
+        return int(direct_arrays + sum(value.nbytes for value in self.diagnostics.values()))
 
 
 @dataclass(frozen=True)
@@ -2248,6 +2250,7 @@ def make_signal_matrix(
     exit_signal_ids: tuple[str, ...] = (),
     entry_pattern_mask: np.ndarray | None = None,
     entry_pattern_ids: tuple[str, ...] = (),
+    diagnostics: Mapping[str, np.ndarray] | None = None,
 ) -> SignalMatrix:
     """Create a compact read-only signal matrix with canonical dtypes."""
     entry_array = _coerce_array(entry, shape, np.uint8, 0)
@@ -2270,6 +2273,7 @@ def make_signal_matrix(
         exit_signal_ids=exit_signal_ids,
         entry_pattern_mask=pattern_mask,
         entry_pattern_ids=entry_pattern_ids,
+        diagnostics=diagnostics,
     )
 
 
@@ -2284,11 +2288,18 @@ def _finalize_signal_matrix(
     exit_signal_ids: tuple[str, ...] = (),
     entry_pattern_mask: np.ndarray | None = None,
     entry_pattern_ids: tuple[str, ...] = (),
+    diagnostics: Mapping[str, np.ndarray] | None = None,
 ) -> SignalMatrix:
     shape = entry.shape
     arrays = [entry, exit_, score, entry_signal_code, exit_signal_code]
     if entry_pattern_mask is not None:
         arrays.append(entry_pattern_mask)
+    diagnostic_arrays: dict[str, np.ndarray] = {}
+    for name, value in (diagnostics or {}).items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("SignalMatrix diagnostic names must be non-empty strings")
+        diagnostic_arrays[name] = _coerce_array(value, shape, np.float32, 0.0)
+        arrays.append(diagnostic_arrays[name])
     _make_read_only(*arrays)
     result = SignalMatrix(
         entry=entry,
@@ -2300,6 +2311,7 @@ def _finalize_signal_matrix(
         exit_signal_ids=tuple(exit_signal_ids),
         entry_pattern_mask=entry_pattern_mask,
         entry_pattern_ids=tuple(entry_pattern_ids),
+        diagnostics=MappingProxyType(diagnostic_arrays),
     )
     validate_signal_matrix(result, shape)
     return result
@@ -2337,6 +2349,13 @@ def validate_signal_matrix(signals: SignalMatrix, shape: tuple[int, int]) -> Non
             raise ValueError("SignalMatrix.entry_pattern_mask must be read-only")
     elif signals.entry_pattern_ids:
         raise ValueError("SignalMatrix.entry_pattern_ids require entry_pattern_mask")
+    for name, values in signals.diagnostics.items():
+        if not isinstance(values, np.ndarray) or values.shape != shape:
+            raise ValueError(f"SignalMatrix diagnostic {name!r} shape does not match market")
+        if values.dtype != np.dtype(np.float32) or values.flags.writeable:
+            raise ValueError(f"SignalMatrix diagnostic {name!r} must be read-only float32")
+        if not np.isfinite(values).all():
+            raise ValueError(f"SignalMatrix diagnostic {name!r} must be finite")
 
 
 def build_market_matrix_from_signals(
@@ -3631,6 +3650,7 @@ class MatrixStrategyPipeline:
                 else None
             ),
             entry_pattern_ids=signals.entry_pattern_ids,
+            diagnostics=signals.diagnostics,
         )
 
 

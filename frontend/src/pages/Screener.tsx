@@ -17,6 +17,7 @@ import { StockPreviewDialog, type NavItem } from '@/components/StockPreviewDialo
 import { WatchlistAddMenu } from '@/components/WatchlistAddMenu'
 import { useStrategyPool } from '@/lib/useStrategyPool'
 import { StrategyCard, CardSize, loadCardSize, cardWrapCls } from '@/components/screener/StrategyCard'
+import { V4DailyScanWorkspace } from '@/components/screener/V4DailyScanWorkspace'
 import { ScreenerTable } from '@/components/screener/ScreenerTable'
 import { ScreenerFilter as ScreenerFilterType, defaultFilter, filterActive, countActiveFilters, applyFilter, FilterPanel } from '@/components/screener/ScreenerFilter'
 import { StrategySettingsDialog } from '@/components/screener/StrategySettingsDialog'
@@ -40,6 +41,7 @@ import {
 const SHOW_STRATEGY_STORE = false
 
 export function Screener() {
+  const [v4DailyScanMode, setV4DailyScanMode] = useState(false)
   const [assetType, setAssetType] = useState<'stock' | 'etf'>('stock')
   // 周期显示筛选: 全部 / 日线 / 分钟 — 只过滤卡片显示, 不影响池和执行;
   // 执行按每个策略自己声明的 timeframes 路由 (日线走盘后缓存, 分钟走本地分钟K分区)
@@ -682,6 +684,8 @@ export function Screener() {
   }
 
 
+  if (v4DailyScanMode) return <V4DailyScanWorkspace onBack={() => setV4DailyScanMode(false)} />
+
   return (
     <>
       <PageHeader
@@ -689,6 +693,7 @@ export function Screener() {
         subtitle="基于本地 enriched 表 · 毫秒级 SQL"
         right={
           <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setV4DailyScanMode(true)} className="inline-flex h-7 items-center rounded-btn border border-border bg-surface px-2.5 text-xs font-medium text-accent hover:border-accent/50">V4 Daily Scan</button>
             {/* 资产类型切换: 股票 / ETF (分钟策略 asset_types 仅股票, ETF 列表自然不含) */}
             <div className="flex items-center h-7 rounded-btn border border-border overflow-hidden">
               {(['stock', 'etf'] as const).map(t => (

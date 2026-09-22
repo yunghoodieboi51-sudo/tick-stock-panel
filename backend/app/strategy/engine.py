@@ -223,6 +223,9 @@ class StrategyResult:
     entry_signal_hits: list[dict] = field(default_factory=list)
     exit_signal_hits: list[dict] = field(default_factory=list)
     fundamental_vetoes: list[dict] = field(default_factory=list)
+    # Optional detailed technical candidates rejected by the shared PIT veto.
+    # Existing callers may continue to consume fundamental_vetoes only.
+    vetoed_rows: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -1367,7 +1370,11 @@ class StrategyEngine:
 
         veto_config = resolve_fundamental_veto_config(strategy_id, overrides)
         veto_result = None
-        technical_entry = signals.entry
+        # Keep the technical matrix for candidate diagnostics.  The shared
+        # fundamental veto intentionally clears entries and pattern masks; a
+        # vetoed technical setup must still be explainable to the product UI.
+        technical_signals = signals
+        technical_entry = technical_signals.entry
         if veto_config is not None and veto_config.enabled:
             veto_result = evaluate_fundamental_veto(market, veto_config)
             signals = apply_fundamental_veto(signals, veto_result)
@@ -1382,6 +1389,7 @@ class StrategyEngine:
         entry_active = signals.entry[target_time]
         exit_active = signals.exit[target_time]
         fundamental_vetoes: list[dict] = []
+        vetoed_rows: list[dict] = []
         if veto_result is not None:
             vetoed_assets = np.flatnonzero(
                 (technical_entry[target_time] != 0) & veto_result.veto[target_time]
@@ -1413,15 +1421,6 @@ class StrategyEngine:
             market.symbols,
         )
         selected_assets = np.flatnonzero(entry_active != 0)
-        if selected_assets.size == 0:
-            return StrategyResult(
-                as_of=as_of,
-                strategy_id=strategy_id,
-                elapsed_ms=(time.perf_counter() - started_at) * 1000,
-                entry_signal_hits=entry_signal_hits,
-                exit_signal_hits=exit_signal_hits,
-                fundamental_vetoes=fundamental_vetoes,
-            )
 
         target_frame = self._matrix_target_frame(source_panel, as_of)
         row_by_symbol = {
@@ -1434,34 +1433,39 @@ class StrategyEngine:
             primary_entry_pattern,
         )
 
-        for asset_id in selected_assets:
+        def _candidate(asset_id: int, *, vetoed: bool) -> dict | None:
             symbol = market.symbols[int(asset_id)]
             row = row_by_symbol.get(symbol)
             if row is None:
-                continue
-            score = float(signals.score[target_time, int(asset_id)])
-            candidate = {**row, "score": score}
-            if signals.entry_pattern_mask is not None:
-                pattern_mask = int(signals.entry_pattern_mask[target_time, int(asset_id)])
-                matched_patterns = matched_entry_patterns(
-                    pattern_mask,
-                    signals.entry_pattern_ids,
-                )
-                primary_pattern = primary_entry_pattern(
-                    pattern_mask,
-                    signals.entry_pattern_ids,
-                )
-                if primary_pattern is not None:
-                    candidate.update({
-                        "primary_entry_pattern": primary_pattern,
-                        "matched_entry_patterns": list(matched_patterns),
-                    })
+                return None
+            diagnostic_signals = technical_signals if vetoed else signals
+            candidate = {**row, "score": float(diagnostic_signals.score[target_time, int(asset_id)])}
+            if diagnostic_signals.entry_pattern_mask is not None:
+                pattern_mask = int(diagnostic_signals.entry_pattern_mask[target_time, int(asset_id)])
+                candidate["primary_entry_pattern"] = primary_entry_pattern(pattern_mask, diagnostic_signals.entry_pattern_ids)
+                candidate["matched_entry_patterns"] = list(matched_entry_patterns(pattern_mask, diagnostic_signals.entry_pattern_ids))
+            if diagnostic_signals.diagnostics:
+                candidate["score_breakdown"] = {
+                    name: float(values[target_time, int(asset_id)])
+                    for name, values in diagnostic_signals.diagnostics.items()
+                }
             if veto_result is not None:
-                candidate.update({
-                    "fundamental_veto": False,
-                    "fundamental_veto_reason_codes": [],
-                })
-            ranked.append((score, candidate))
+                candidate["fundamental_veto"] = vetoed
+                candidate["fundamental_veto_reason_codes"] = (
+                    veto_result.reason_codes_at(target_time, int(asset_id)) if vetoed else []
+                )
+            return candidate
+
+        if veto_result is not None:
+            for asset_id in np.flatnonzero((technical_entry[target_time] != 0) & veto_result.veto[target_time]):
+                candidate = _candidate(int(asset_id), vetoed=True)
+                if candidate is not None:
+                    vetoed_rows.append(candidate)
+
+        for asset_id in selected_assets:
+            candidate = _candidate(int(asset_id), vetoed=False)
+            if candidate is not None:
+                ranked.append((float(candidate["score"]), candidate))
         ranked.sort(
             key=lambda item: item[0],
             reverse=bool(strategy.meta.get("descending", True)),
@@ -1480,6 +1484,7 @@ class StrategyEngine:
             entry_signal_hits=entry_signal_hits,
             exit_signal_hits=exit_signal_hits,
             fundamental_vetoes=fundamental_vetoes,
+            vetoed_rows=_sanitize(vetoed_rows),
         )
 
     def _run_composite_strategy(

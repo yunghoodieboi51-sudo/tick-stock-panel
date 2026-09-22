@@ -1577,6 +1577,42 @@ export interface StrategyBacktestTrade {
   matched_entry_patterns?: string[]
 }
 
+export interface DailyScanPlan {
+  buy_zone_low: number | null
+  buy_zone_high: number | null
+  chase_limit_price: number | null
+  stop_loss_price: number | null
+  stop_loss_pct: number | null
+  trailing_stop_pct: number | null
+  max_hold_days: number | null
+  target_capital: number | null
+  estimated_shares: number | null
+  estimated_order_value: number | null
+  lot_size: number | null
+  lot_rule_status: string | null
+  plan_price_status?: string
+  initial_position_pct?: number | null
+  fundamental_status?: 'PASS' | 'VETO' | 'UNKNOWN'
+  fundamental_reason_codes?: string[]
+  warnings?: string[]
+  invalidation_conditions: string[]
+}
+export interface DailyScanCandidate {
+  run_id: string; rank: number | null; symbol: string; name?: string | null; trade_date?: string | null
+  final_score: number | null; score_breakdown: Record<string, number>; entry_pattern_primary?: string | null
+  entry_patterns_matched: string[]; signal_reference_price: number | null; signal_price_basis: string
+  execution_reference_price: number | null; execution_price_basis: string | null
+  latest_raw_price?: number | null; latest_raw_price_basis?: string | null
+  fundamental: { status: 'PASS' | 'VETO' | 'UNKNOWN'; reason_codes: string[] }
+  why_selected: string[]; warnings: string[]; research_status: string; plan: DailyScanPlan
+}
+export interface DailyScanManifest {
+  run_id: string; state: 'RUNNING' | 'COMPLETED' | 'FAILED'; stage: string; started_at: string
+  completed_at: string | null; error: string | null; candidate_count?: number; rejected_count?: number
+  research_status: string; reused?: boolean
+}
+export interface DailyScanResult { manifest: DailyScanManifest; result: { candidates: DailyScanCandidate[]; rejected: DailyScanCandidate[]; trade_date: string; warnings: string[] } | null }
+
 export interface EntryPatternBreakdown {
   trade_count: number
   win_count: number
@@ -2604,6 +2640,11 @@ export const api = {
         ? `/api/screener/cached?ext_columns=${encodeURIComponent(extColumns)}`
         : '/api/screener/cached',
     ),
+  dailyScanStatus: () => request<{ state: 'IDLE' | 'RUNNING'; active_run_id: string | null; latest: DailyScanManifest | null }>('/api/daily-scan/status'),
+  dailyScanStart: (payload: { account_size?: number; max_position_pct?: number; max_candidates?: number; risk_per_trade_pct?: number } = {}) =>
+    request<DailyScanManifest>('/api/daily-scan/runs', { method: 'POST', body: JSON.stringify(payload) }),
+  dailyScanRuns: (limit = 30) => request<{ items: DailyScanManifest[] }>(`/api/daily-scan/runs?limit=${limit}`),
+  dailyScanRun: (id: string) => request<DailyScanResult>(`/api/daily-scan/runs/${encodeURIComponent(id)}`),
   marketSnapshot: () =>
     request<{ as_of: string | null; rows: MarketSnapshotRow[] }>('/api/screener/market-snapshot'),
   overviewMarket: (asOf?: string) => request<OverviewMarket>(`/api/overview/market${asOf ? `?as_of=${asOf}` : ''}`),
