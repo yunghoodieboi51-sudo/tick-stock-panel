@@ -277,7 +277,27 @@ class DailyScanService:
                 "execution_price_basis": "RAW" if raw is not None else None,
                 "latest_raw_price": raw,
                 "latest_raw_price_basis": "RAW_DATA_AS_OF" if raw is not None else None,
-                "fundamental": {"status": status, "reason_codes": reasons},
+                "fundamental": {
+                    "status": status,
+                    "reason_codes": reasons,
+                    # The engine populated this from its target-time PIT
+                    # matrix.  Older/custom engine implementations may not
+                    # expose it, in which case we explicitly preserve an
+                    # unknown/missing state instead of querying latest data.
+                    "evidence": row.get("fundamental_pit_evidence")
+                    or {
+                        "availability": "MISSING",
+                        "effective_as_of": None,
+                        "metrics": {
+                            "roe_latest": None,
+                            "revenue_yoy_latest": None,
+                            "net_income_yoy_latest": None,
+                            "net_margin_latest": None,
+                            "debt_ratio_latest": None,
+                            "gross_margin_latest": None,
+                        },
+                    },
+                },
                 "why_selected": why_selected,
                 "warnings": []
                 if raw is not None

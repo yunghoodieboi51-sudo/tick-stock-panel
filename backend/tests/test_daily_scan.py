@@ -27,6 +27,18 @@ def _row(symbol: str, score: float, amount: float, raw_close: float) -> dict:
             "volume": 10.0,
             "volatility": 8.0,
         },
+        "fundamental_pit_evidence": {
+            "availability": "PIT_AVAILABLE",
+            "effective_as_of": "2026-09-11",
+            "metrics": {
+                "roe_latest": 8.5,
+                "revenue_yoy_latest": 12.0,
+                "net_income_yoy_latest": 10.0,
+                "net_margin_latest": 4.0,
+                "debt_ratio_latest": None,
+                "gross_margin_latest": 20.0,
+            },
+        },
     }
 
 
@@ -60,7 +72,7 @@ class _Engine:
         assert overrides is None
         vetoed = _row("000003.SZ", 95.0, 1.0, 8.0)
         vetoed["fundamental_veto"] = True
-        vetoed["fundamental_veto_reason_codes"] = ["MISSING_FINANCIAL_DATA"]
+        vetoed["fundamental_veto_reason_codes"] = ["NEGATIVE_ROE", "MISSING_FINANCIAL_DATA"]
         return SimpleNamespace(
             rows=[_row("000001.SZ", 80.0, 10.0, 10.0), _row("000002.SZ", 90.0, 5.0, 20.0)],
             vetoed_rows=[vetoed],
@@ -93,6 +105,17 @@ def test_daily_scan_reuses_engine_result_and_keeps_raw_plan_prices(monkeypatch, 
     assert candidate["plan"]["estimated_shares"] % 100 == 0
     assert candidate["plan"]["estimated_order_value"] <= 100000
     assert result["rejected"][0]["fundamental"]["status"] == "VETO"
+    assert result["rejected"][0]["fundamental"]["reason_codes"] == [
+        "NEGATIVE_ROE",
+        "MISSING_FINANCIAL_DATA",
+    ]
+    assert (
+        result["candidates"][0]["fundamental"]["evidence"]
+        == _row("ignored", 0, 0, 1)["fundamental_pit_evidence"]
+    )
+    assert (
+        result["candidates"][0]["fundamental"]["evidence"]["metrics"]["debt_ratio_latest"] is None
+    )
     assert result["rejected"][0]["plan"]["fundamental_status"] == "VETO"
     assert result["fundamental_veto_policy"] is not None
 
@@ -108,6 +131,20 @@ def test_run_store_is_immutable_and_retains_only_finished_runs(tmp_path) -> None
     assert restored is not None
     assert restored["manifest"]["state"] == "COMPLETED"
     assert restored["result"] == {"candidates": [], "rejected": []}
+
+
+def test_saved_evidence_is_not_changed_by_later_memory_or_data_mutation(tmp_path) -> None:
+    store = daily_scan.DailyScanRunStore(tmp_path)
+    manifest = store.create()
+    result = {
+        "candidates": [{"fundamental": _row("000001.SZ", 1, 1, 1)["fundamental_pit_evidence"]}],
+        "rejected": [],
+    }
+    store.complete(manifest["run_id"], result)
+    result["candidates"][0]["fundamental"]["metrics"]["roe_latest"] = 999.0
+    stored = store.result(manifest["run_id"])
+    assert stored is not None
+    assert stored["result"]["candidates"][0]["fundamental"]["metrics"]["roe_latest"] == 8.5
 
 
 def test_plan_with_missing_raw_reference_never_invents_nominal_prices() -> None:

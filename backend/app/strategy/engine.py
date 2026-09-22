@@ -1363,6 +1363,7 @@ class StrategyEngine:
             ),
         )
         from app.strategy.fundamental_veto import (
+            CORE_FUNDAMENTAL_FIELDS,
             apply_fundamental_veto,
             evaluate_fundamental_veto,
             resolve_fundamental_veto_config,
@@ -1433,17 +1434,63 @@ class StrategyEngine:
             primary_entry_pattern,
         )
 
+        def _fundamental_evidence(asset_id: int) -> dict | None:
+            """Serialize the exact target-time PIT fields used by the veto.
+
+            This is diagnostics only: it deliberately reads the already-built
+            matrix, rather than reloading financial parquet or recalculating a
+            financial snapshot after the strategy has run.
+            """
+            if veto_config is None or not veto_config.enabled:
+                return None
+            field_names = (
+                "roe_latest",
+                "revenue_yoy_latest",
+                "net_income_yoy_latest",
+                "net_margin_latest",
+                "debt_ratio_latest",
+                "gross_margin_latest",
+            )
+            metrics: dict[str, float | None] = {}
+            for field_name in field_names:
+                values = market.fields.get(field_name)
+                value = values[target_time, asset_id] if values is not None else np.nan
+                metrics[field_name] = float(value) if np.isfinite(value) else None
+            available = sum(metrics[name] is not None for name in CORE_FUNDAMENTAL_FIELDS)
+            return {
+                # This describes target-date matrix availability, not an
+                # announcement timestamp.  The latter is intentionally not
+                # invented because it is not retained in the matrix.
+                "effective_as_of": str(as_of),
+                "availability": (
+                    "PIT_AVAILABLE"
+                    if available >= veto_config.minimum_available_fields
+                    else "MISSING"
+                ),
+                "metrics": metrics,
+            }
+
         def _candidate(asset_id: int, *, vetoed: bool) -> dict | None:
             symbol = market.symbols[int(asset_id)]
             row = row_by_symbol.get(symbol)
             if row is None:
                 return None
             diagnostic_signals = technical_signals if vetoed else signals
-            candidate = {**row, "score": float(diagnostic_signals.score[target_time, int(asset_id)])}
+            candidate = {
+                **row,
+                "score": float(diagnostic_signals.score[target_time, int(asset_id)]),
+            }
             if diagnostic_signals.entry_pattern_mask is not None:
-                pattern_mask = int(diagnostic_signals.entry_pattern_mask[target_time, int(asset_id)])
-                candidate["primary_entry_pattern"] = primary_entry_pattern(pattern_mask, diagnostic_signals.entry_pattern_ids)
-                candidate["matched_entry_patterns"] = list(matched_entry_patterns(pattern_mask, diagnostic_signals.entry_pattern_ids))
+                pattern_mask = int(
+                    diagnostic_signals.entry_pattern_mask[target_time, int(asset_id)]
+                )
+                candidate["primary_entry_pattern"] = primary_entry_pattern(
+                    pattern_mask,
+                    diagnostic_signals.entry_pattern_ids,
+                )
+                candidate["matched_entry_patterns"] = list(
+                    matched_entry_patterns(pattern_mask, diagnostic_signals.entry_pattern_ids)
+                )
             if diagnostic_signals.diagnostics:
                 candidate["score_breakdown"] = {
                     name: float(values[target_time, int(asset_id)])
@@ -1454,10 +1501,13 @@ class StrategyEngine:
                 candidate["fundamental_veto_reason_codes"] = (
                     veto_result.reason_codes_at(target_time, int(asset_id)) if vetoed else []
                 )
+                candidate["fundamental_pit_evidence"] = _fundamental_evidence(int(asset_id))
             return candidate
 
         if veto_result is not None:
-            for asset_id in np.flatnonzero((technical_entry[target_time] != 0) & veto_result.veto[target_time]):
+            for asset_id in np.flatnonzero(
+                (technical_entry[target_time] != 0) & veto_result.veto[target_time]
+            ):
                 candidate = _candidate(int(asset_id), vetoed=True)
                 if candidate is not None:
                     vetoed_rows.append(candidate)

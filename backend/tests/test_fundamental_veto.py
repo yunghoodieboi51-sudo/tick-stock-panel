@@ -388,6 +388,21 @@ def test_realtime_and_backtest_apply_identical_veto_mask():
     ]
     assert realtime.vetoed_rows[0]["symbol"] == "000002.SZ"
     assert realtime.vetoed_rows[0]["fundamental_veto_reason_codes"] == [NEGATIVE_ROE]
+    assert realtime.rows[0]["fundamental_pit_evidence"] == {
+        "effective_as_of": "2026-08-26",
+        "availability": "PIT_AVAILABLE",
+        "metrics": {
+            "roe_latest": 8.0,
+            "revenue_yoy_latest": 5.0,
+            "net_income_yoy_latest": 5.0,
+            "net_margin_latest": 5.0,
+            # Debt is disabled by this policy, so no matrix field is
+            # requested or fabricated for the immutable diagnostics.
+            "debt_ratio_latest": None,
+            "gross_margin_latest": 20.0,
+        },
+    }
+    assert realtime.vetoed_rows[0]["fundamental_pit_evidence"]["metrics"]["roe_latest"] == -1.0
     assert backtest_engine.sim_matrix.entry[-1].tolist() == [1, 0]
     assert backtest.stats["selection"]["technical_candidates"] == 4
     assert backtest.stats["selection"]["fundamental_vetoed"] == 2

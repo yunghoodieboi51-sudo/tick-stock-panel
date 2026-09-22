@@ -1597,13 +1597,32 @@ export interface DailyScanPlan {
   warnings?: string[]
   invalidation_conditions: string[]
 }
+export interface DailyScanFundamentalMetrics {
+  roe_latest: number | null
+  revenue_yoy_latest: number | null
+  net_income_yoy_latest: number | null
+  net_margin_latest: number | null
+  debt_ratio_latest: number | null
+  gross_margin_latest: number | null
+}
+export interface DailyScanFundamentalEvidence {
+  /** Target trade date whose already-PIT-aligned matrix values were used. */
+  effective_as_of: string | null
+  availability: 'PIT_AVAILABLE' | 'MISSING'
+  metrics: DailyScanFundamentalMetrics
+}
 export interface DailyScanCandidate {
   run_id: string; rank: number | null; symbol: string; name?: string | null; trade_date?: string | null
   final_score: number | null; score_breakdown: Record<string, number>; entry_pattern_primary?: string | null
   entry_patterns_matched: string[]; signal_reference_price: number | null; signal_price_basis: string
   execution_reference_price: number | null; execution_price_basis: string | null
   latest_raw_price?: number | null; latest_raw_price_basis?: string | null
-  fundamental: { status: 'PASS' | 'VETO' | 'UNKNOWN'; reason_codes: string[] }
+  fundamental: {
+    status: 'PASS' | 'VETO' | 'UNKNOWN'
+    reason_codes: string[]
+    /** Absent for immutable V4.8 runs created before this contract existed. */
+    evidence?: DailyScanFundamentalEvidence
+  }
   why_selected: string[]; warnings: string[]; research_status: string; plan: DailyScanPlan
 }
 export interface DailyScanManifest {
@@ -1611,7 +1630,7 @@ export interface DailyScanManifest {
   completed_at: string | null; error: string | null; candidate_count?: number; rejected_count?: number
   research_status: string; reused?: boolean
 }
-export interface DailyScanResult { manifest: DailyScanManifest; result: { candidates: DailyScanCandidate[]; rejected: DailyScanCandidate[]; trade_date: string; warnings: string[] } | null }
+export interface DailyScanResult { manifest: DailyScanManifest; result: { candidates: DailyScanCandidate[]; rejected: DailyScanCandidate[]; trade_date: string; warnings: string[]; fundamental_veto_policy?: Record<string, unknown> | null } | null }
 
 export interface EntryPatternBreakdown {
   trade_count: number
